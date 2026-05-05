@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rqdata-tick-data"
+version = "0.1.0"
+description = "Probe, download, validate, and aggregate RQData Hong Kong historical tick-depth snapshots."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.2",
+  "pyarrow>=16",
+  "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+rqdata = [
+  "rqdatac>=3",
+]
+
+[project.scripts]
+rqdata-tick = "rqdata_tick_data.cli:main_entry"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rqdata_tick_data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
