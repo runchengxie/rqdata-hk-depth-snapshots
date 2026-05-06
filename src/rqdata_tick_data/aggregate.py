@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from rqdata_tick_data.quality import quote_ladder_flags
 from rqdata_tick_data.storage import (
     atomic_write_parquet,
     load_parquet_parts,
@@ -18,6 +19,9 @@ DAILY_METRIC_COLUMNS = (
     "tick_count",
     "quote_coverage_ratio",
     "bad_quote_ratio",
+    "best_spread_cross_ratio",
+    "quote_ladder_invalid_count",
+    "negative_depth_volume_count",
     "spread_bps_p50",
     "spread_bps_p90",
     "depth1_notional_p50",
@@ -28,6 +32,16 @@ DAILY_METRIC_COLUMNS = (
     "open_30m_vwap",
     "full_day_tick_vwap",
     "open_to_tick_vwap_bps",
+    "valid_vwap_increment_count",
+    "vwap_invalid_increment_count",
+    "volume_decrease_count",
+    "turnover_decrease_count",
+    "quote_quality_flag",
+    "vwap_quality_flag",
+    "coverage_quality_flag",
+    "tick_count_quality_flag",
+    "is_usable_for_research",
+    "is_usable_for_cost_model",
 )
 
 
@@ -78,24 +92,57 @@ def imbalance(group: pd.DataFrame, levels: int) -> pd.Series:
 
 
 def _incremental(values: pd.Series) -> pd.Series:
+    return _incremental_with_stats(values)["delta"]
+
+
+def _incremental_with_stats(values: pd.Series) -> dict[str, Any]:
     numeric = pd.to_numeric(values, errors="coerce")
     delta = numeric.diff()
     if not numeric.empty:
         delta.iloc[0] = numeric.iloc[0]
-    return delta.where(delta >= 0)
+    negative = delta < 0
+    return {
+        "delta": delta.where(delta >= 0),
+        "decrease_count": int(negative.sum()),
+        "missing_then_resumed_count": int(
+            (numeric.notna() & numeric.shift().isna() & numeric.shift(2).notna()).sum()
+        ),
+    }
 
 
 def _vwap(group: pd.DataFrame) -> float | None:
+    return _vwap_with_stats(group)["value"]
+
+
+def _vwap_with_stats(group: pd.DataFrame) -> dict[str, Any]:
     if not _has(group, ["volume", "total_turnover"]):
-        return None
+        return {
+            "value": None,
+            "valid_increment_count": 0,
+            "invalid_increment_count": 0,
+            "volume_decrease_count": 0,
+            "turnover_decrease_count": 0,
+        }
     ordered = group.sort_values("datetime") if "datetime" in group.columns else group
-    volume = _incremental(ordered["volume"])
-    turnover = _incremental(ordered["total_turnover"])
+    volume_stats = _incremental_with_stats(ordered["volume"])
+    turnover_stats = _incremental_with_stats(ordered["total_turnover"])
+    volume = volume_stats["delta"]
+    turnover = turnover_stats["delta"]
     valid = (volume > 0) & (turnover >= 0)
     volume_sum = volume[valid].sum()
+    value = None
     if not volume_sum:
-        return None
-    return float(turnover[valid].sum() / volume_sum)
+        value = None
+    else:
+        value = float(turnover[valid].sum() / volume_sum)
+    invalid_increment_count = int((volume.isna() | turnover.isna()).sum())
+    return {
+        "value": value,
+        "valid_increment_count": int(valid.sum()),
+        "invalid_increment_count": invalid_increment_count,
+        "volume_decrease_count": int(volume_stats["decrease_count"]),
+        "turnover_decrease_count": int(turnover_stats["decrease_count"]),
+    }
 
 
 def _open_30m(group: pd.DataFrame) -> pd.DataFrame:
@@ -120,12 +167,19 @@ def aggregate_group(group: pd.DataFrame) -> dict[str, Any]:
         ask = _num(group, "a1")
         bid = _num(group, "b1")
         positive = (ask > 0) & (bid > 0)
-        invalid = positive & (ask < bid)
+        flags = quote_ladder_flags(group)
+        invalid = flags["crossed_best_spread"]
         row["quote_coverage_ratio"] = float(positive.mean())
         row["bad_quote_ratio"] = float((~positive | invalid).mean())
+        row["best_spread_cross_ratio"] = float(invalid.mean())
+        row["quote_ladder_invalid_count"] = int(flags["quote_ladder_invalid"].sum())
+        row["negative_depth_volume_count"] = int(flags["negative_depth_volume"].sum())
     else:
         row["quote_coverage_ratio"] = pd.NA
         row["bad_quote_ratio"] = pd.NA
+        row["best_spread_cross_ratio"] = pd.NA
+        row["quote_ladder_invalid_count"] = pd.NA
+        row["negative_depth_volume_count"] = pd.NA
 
     spread = spread_bps(group)
     row["spread_bps_p50"] = float(spread.quantile(0.50)) if not spread.dropna().empty else pd.NA
@@ -141,14 +195,51 @@ def aggregate_group(group: pd.DataFrame) -> dict[str, Any]:
         key = f"imbalance{levels}_p50"
         row[key] = float(series.quantile(0.50)) if not series.dropna().empty else pd.NA
 
-    full_vwap = _vwap(group)
-    open_vwap = _vwap(_open_30m(group))
+    full_vwap_stats = _vwap_with_stats(group)
+    open_vwap_stats = _vwap_with_stats(_open_30m(group))
+    full_vwap = full_vwap_stats["value"]
+    open_vwap = open_vwap_stats["value"]
     row["open_30m_vwap"] = open_vwap if open_vwap is not None else pd.NA
     row["full_day_tick_vwap"] = full_vwap if full_vwap is not None else pd.NA
     if open_vwap is not None and full_vwap:
         row["open_to_tick_vwap_bps"] = float((open_vwap / full_vwap - 1) * 10000)
     else:
         row["open_to_tick_vwap_bps"] = pd.NA
+    row["valid_vwap_increment_count"] = int(full_vwap_stats["valid_increment_count"])
+    row["vwap_invalid_increment_count"] = int(full_vwap_stats["invalid_increment_count"])
+    row["volume_decrease_count"] = int(full_vwap_stats["volume_decrease_count"])
+    row["turnover_decrease_count"] = int(full_vwap_stats["turnover_decrease_count"])
+
+    quote_coverage = row["quote_coverage_ratio"]
+    quote_invalid_count = row["quote_ladder_invalid_count"]
+    if pd.isna(quote_coverage):
+        row["quote_quality_flag"] = "missing"
+    elif int(quote_invalid_count or 0) > 0:
+        row["quote_quality_flag"] = "fail"
+    elif float(quote_coverage) < 0.80:
+        row["quote_quality_flag"] = "warning"
+    else:
+        row["quote_quality_flag"] = "pass"
+
+    if full_vwap is None:
+        row["vwap_quality_flag"] = "fail"
+    elif row["volume_decrease_count"] or row["turnover_decrease_count"]:
+        row["vwap_quality_flag"] = "warning"
+    else:
+        row["vwap_quality_flag"] = "pass"
+
+    row["coverage_quality_flag"] = "pass" if row["tick_count"] > 0 else "fail"
+    row["tick_count_quality_flag"] = "pass" if row["tick_count"] >= 2 else "warning"
+    row["is_usable_for_research"] = bool(
+        row["coverage_quality_flag"] == "pass"
+        and row["quote_quality_flag"] in {"pass", "warning"}
+        and row["vwap_quality_flag"] in {"pass", "warning"}
+    )
+    row["is_usable_for_cost_model"] = bool(
+        row["coverage_quality_flag"] == "pass"
+        and row["quote_quality_flag"] == "pass"
+        and row["vwap_quality_flag"] in {"pass", "warning"}
+    )
 
     return row
 

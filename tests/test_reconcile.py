@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from rqdata_tick_data.cli import main
 from rqdata_tick_data.reconcile import (
@@ -42,6 +43,10 @@ def test_tick_ohlcv_aggregation_uses_final_cumulative_fallback() -> None:
     assert aggregate.loc[0, "tick_total_turnover"] == 20100.0
     assert metadata["volume_fallback_count"] == 1
     assert metadata["turnover_fallback_count"] == 1
+    assert aggregate.loc[0, "tick_close_source"] == "last_valid_tick"
+    assert aggregate.loc[0, "volume_source"] == "max_fallback"
+    assert aggregate.loc[0, "turnover_source"] == "max_fallback"
+    assert metadata["volume_source_counts"]["max_fallback"] == 1
 
 
 def test_tick_ohlcv_aggregation_counts_invalid_timestamps() -> None:
@@ -145,6 +150,68 @@ def test_reconciliation_reports_close_mismatch_and_quote_ladder(tmp_path) -> Non
     assert "tick_close_mismatch" in checks
     assert checks["tick_close_mismatch"]["severity"] == "warning"
     assert "quote_ladder_invalid" in checks
+
+
+@pytest.mark.parametrize(
+    ("threshold", "expected_gate"),
+    [
+        ("none", "pass"),
+        ("info", "fail"),
+        ("warning", "fail"),
+        ("error", "pass"),
+    ],
+)
+def test_quality_gate_thresholds_match_health_and_reconcile(
+    tmp_path,
+    threshold: str,
+    expected_gate: str,
+) -> None:
+    from rqdata_tick_data.health import inspect_raw_health
+
+    raw_root = tmp_path / f"raw_{threshold}"
+    daily_root = tmp_path / f"daily_{threshold}"
+    frame = pd.DataFrame(
+        {
+            "order_book_id": ["00001.XHKG", "00001.XHKG"],
+            "datetime": [
+                pd.Timestamp("2025-03-03 09:30"),
+                pd.Timestamp("2025-03-03 09:30"),
+            ],
+            "trading_date": ["20250303", "20250303"],
+            "last": [100.0, 100.0],
+            "volume": [100.0, 100.0],
+            "total_turnover": [10000.0, 10000.0],
+            "a1": [100.1, 100.1],
+            "b1": [100.0, 100.0],
+        }
+    )
+    _write_raw(raw_root, frame)
+    _write_daily(
+        daily_root,
+        "00001.HK",
+        pd.DataFrame(
+            {
+                "trade_date": ["20250303"],
+                "symbol": ["00001.HK"],
+                "open": [101.0],
+                "high": [101.0],
+                "low": [101.0],
+                "close": [101.0],
+                "volume": [100.0],
+                "total_turnover": [10000.0],
+            }
+        ),
+    )
+
+    health = inspect_raw_health(raw_root, fail_on_severity=threshold)
+    reconcile = inspect_tick_daily_reconciliation(
+        raw_root,
+        daily_root,
+        config=ReconcileConfig(fail_on_severity=threshold),
+    )
+
+    assert health["quality_verdict"]["gate_status"] == expected_gate
+    assert reconcile["quality_verdict"]["gate_status"] == expected_gate
 
 
 def test_cross_clean_reference_policy_records_numeric_mismatch_as_info(tmp_path) -> None:

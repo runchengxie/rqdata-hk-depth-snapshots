@@ -59,3 +59,83 @@ def test_health_gate_can_fail_on_warnings(tmp_path) -> None:
 
     assert report["status"] == "pass"
     assert report["quality_verdict"]["gate_status"] == "fail"
+
+
+def test_health_reports_symbol_date_diagnostics_and_split_anomalies(tmp_path) -> None:
+    root = tmp_path / "cache"
+    path = root / "parts" / "trade_date=20250303" / "batch_0000.parquet"
+    frame = pd.DataFrame(
+        {
+            "order_book_id": ["00001.XHKG"] * 8,
+            "datetime": [
+                pd.Timestamp("2025-03-03 09:30"),
+                pd.Timestamp("2025-03-03 09:30"),
+                pd.Timestamp("2025-03-03 09:31"),
+                pd.Timestamp("2025-03-03 09:31"),
+                pd.Timestamp("2025-03-03 09:31:30"),
+                pd.Timestamp("2025-03-03 09:29"),
+                pd.Timestamp("2025-03-03 08:59"),
+                pd.Timestamp("2025-03-03 09:32"),
+            ],
+            "trading_date": ["20250303"] * 8,
+            "last": [100.0, 100.0, 100.1, 100.2, 100.15, 100.0, 99.9, 100.3],
+            "a1": [100.1, 100.1, 99.0, 101.0, 100.2, pd.NA, 100.0, 100.3],
+            "a2": [100.2, 100.2, 99.2, 100.5, 100.3, pd.NA, 100.1, 100.4],
+            "a1_v": [1000, 1000, 1000, -1, 1000, 1000, 1000, 1000],
+            "b1": [100.0, 100.0, 100.0, 100.0, 100.1, 100.0, 0, 100.2],
+            "b2": [99.9, 99.9, 99.8, 100.5, 100.0, 99.9, 99.8, 100.1],
+            "b1_v": [900, 900, 900, 900, 900, 900, 900, 900],
+            "volume": [100.0, 100.0, 200.0, 150.0, pd.NA, 1.0, 15.0, 20.0],
+            "total_turnover": [
+                10000.0,
+                10000.0,
+                20000.0,
+                15000.0,
+                pd.NA,
+                100.0,
+                1500.0,
+                2000.0,
+            ],
+        }
+    )
+    atomic_write_parquet(frame, path)
+
+    report = inspect_raw_health(root, fail_on_severity="warning")
+    unit = report["unit_diagnostics"][0]
+
+    assert report["best_ask_missing_count"] == 1
+    assert report["best_bid_missing_count"] == 1
+    assert report["best_spread_cross_count"] == 1
+    assert report["ask_ladder_inversion_count"] == 1
+    assert report["bid_ladder_inversion_count"] == 1
+    assert report["negative_depth_volume_count"] == 1
+    assert report["same_timestamp_conflict_count"] == 1
+    assert report["timestamp_non_monotonic_count"] >= 1
+    assert report["volume_large_drop_count"] >= 1
+    assert report["volume_missing_then_resumed_count"] == 1
+    assert report["outside_session_rows"] == 1
+    assert unit["severity"] == "warning"
+    assert "same_timestamp_conflicts" in unit["check_names"]
+    assert report["quality_verdict"]["gate_status"] == "fail"
+
+
+def test_health_can_write_unit_diagnostics(tmp_path) -> None:
+    root = tmp_path / "cache"
+    path = root / "parts" / "trade_date=20250303" / "batch_0000.parquet"
+    atomic_write_parquet(
+        pd.DataFrame(
+            {
+                "order_book_id": ["00001.XHKG"],
+                "datetime": [pd.Timestamp("2025-03-03 09:30")],
+                "trading_date": ["20250303"],
+                "a1": [100.1],
+                "b1": [100.0],
+            }
+        ),
+        path,
+    )
+
+    report = write_health_report(root, units_output=tmp_path / "health_units.csv")
+
+    assert report["unit_diagnostics_path"].endswith("health_units.csv")
+    assert (tmp_path / "health_units.csv").exists()

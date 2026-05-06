@@ -65,6 +65,34 @@ class ProviderBatch:
     units: tuple[UnitPlan, ...]
 
 
+@dataclass(frozen=True)
+class DownloadConfig:
+    symbols: tuple[str, ...]
+    start_date: str
+    end_date: str
+    output_root: Path
+    fields: tuple[str, ...]
+    batch_size: int = 5
+    resume: bool = True
+    continue_on_error: bool = False
+    dry_run: bool = False
+    metadata_kind: str = "download"
+    raw_layout: str = "symbol-date"
+    calendar: str = "provider"
+    adjust_type: str = "none"
+    time_slice: str | None = None
+    parquet_engine: str = DEFAULT_PARQUET_ENGINE
+    parquet_compression: str | None = DEFAULT_PARQUET_COMPRESSION
+    parquet_compression_level: int | None = None
+    retry_max_attempts: int = 1
+    retry_backoff_seconds: float = 0.0
+    retry_max_backoff_seconds: float = 60.0
+    quota_guard: bool = True
+    quota_stop_ratio: float = 0.95
+    quota_safety_multiplier: float = 1.2
+    audit_output: str | Path | None = None
+
+
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -322,6 +350,22 @@ def _storage_settings(
     }
 
 
+def _layout_deprecations(raw_layout: str) -> list[dict[str, str]]:
+    if raw_layout != "batch":
+        return []
+    return [
+        {
+            "feature": "raw_layout=batch",
+            "status": "deprecated",
+            "replacement": "raw_layout=symbol-date",
+            "message": (
+                "Legacy batch layout remains readable for compatibility, but new downloads "
+                "should use symbol-date layout."
+            ),
+        }
+    ]
+
+
 def _base_metadata(
     *,
     kind: str,
@@ -355,6 +399,7 @@ def _base_metadata(
         "time_slice": time_slice,
         "output_root": str(output_root),
         "storage": storage,
+        "deprecations": _layout_deprecations(storage["raw_layout"]),
         "raw_layout": storage["raw_layout"],
         "layout_version": storage["layout_version"],
         "parquet": storage["parquet"],
@@ -375,6 +420,65 @@ def _base_metadata(
         "quota_guard": {},
         "rows": 0,
     }
+
+
+def _build_download_config(
+    *,
+    symbols: Sequence[str],
+    start_date: str,
+    end_date: str,
+    output_root: str | Path,
+    fields: Sequence[str] | None,
+    batch_size: int,
+    resume: bool,
+    continue_on_error: bool,
+    dry_run: bool,
+    metadata_kind: str,
+    raw_layout: str,
+    calendar: str,
+    adjust_type: str,
+    time_slice: str | None,
+    parquet_engine: str,
+    parquet_compression: str | None,
+    parquet_compression_level: int | None,
+    retry_max_attempts: int,
+    retry_backoff_seconds: float,
+    retry_max_backoff_seconds: float,
+    quota_guard: bool,
+    quota_stop_ratio: float,
+    quota_safety_multiplier: float,
+    audit_output: str | Path | None,
+) -> DownloadConfig:
+    if quota_stop_ratio <= 0 or quota_stop_ratio > 1:
+        raise ValueError("quota_stop_ratio must be in (0, 1].")
+    if quota_safety_multiplier <= 0:
+        raise ValueError("quota_safety_multiplier must be positive.")
+    return DownloadConfig(
+        symbols=tuple(symbols),
+        start_date=format_date(start_date),
+        end_date=format_date(end_date),
+        output_root=Path(output_root),
+        fields=tuple(fields or DEFAULT_TICK_DEPTH_FIELDS),
+        batch_size=batch_size,
+        resume=resume,
+        continue_on_error=continue_on_error,
+        dry_run=dry_run,
+        metadata_kind=metadata_kind,
+        raw_layout=normalize_raw_layout(raw_layout),
+        calendar=normalize_calendar(calendar),
+        adjust_type=adjust_type,
+        time_slice=time_slice,
+        parquet_engine=parquet_engine,
+        parquet_compression=parquet_compression,
+        parquet_compression_level=parquet_compression_level,
+        retry_max_attempts=retry_max_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        retry_max_backoff_seconds=retry_max_backoff_seconds,
+        quota_guard=quota_guard,
+        quota_stop_ratio=quota_stop_ratio,
+        quota_safety_multiplier=quota_safety_multiplier,
+        audit_output=audit_output,
+    )
 
 
 def _unit_info(unit: UnitPlan, **extra: Any) -> dict[str, Any]:
@@ -450,6 +554,59 @@ def _invalid_coverage_for_unit(
         if row.get("file_path") == unit_path and row.get("status") != VALID_STATUS:
             return row
     return None
+
+
+def _fetch_provider_tick_frame(
+    *,
+    provider: TickDataProvider,
+    symbols: Sequence[str],
+    trade_date: str,
+    fields: Sequence[str],
+    adjust_type: str,
+    time_slice: str | None,
+    retry_max_attempts: int,
+    retry_backoff_seconds: float,
+    retry_max_backoff_seconds: float,
+) -> Any:
+    def fetch() -> pd.DataFrame:
+        return provider.get_price(
+            order_book_ids=symbols,
+            start_date=trade_date,
+            end_date=trade_date,
+            fields=fields,
+            adjust_type=adjust_type,
+            time_slice=time_slice,
+        )
+
+    return retry_provider_call(
+        "get_price",
+        fetch,
+        max_attempts=retry_max_attempts,
+        backoff_seconds=retry_backoff_seconds,
+        max_backoff_seconds=retry_max_backoff_seconds,
+    )
+
+
+def _mark_quota_guard_availability(metadata: dict[str, Any], guard: dict[str, Any]) -> None:
+    metadata["quota_guard"]["available"] = bool(
+        metadata["quota_guard"].get("available") or guard.get("available")
+    )
+
+
+def _finalize_download_run(
+    *,
+    provider: TickDataProvider,
+    metadata: dict[str, Any],
+    audit_records: Sequence[AuditRecord],
+    audit_file: Path,
+    metadata_file: Path,
+) -> None:
+    metadata["quota_after"] = _quota_snapshot(provider)
+    metadata["audit_status_counts"] = summarize_audit(audit_records)
+    if audit_records:
+        write_audit_records(audit_file, audit_records)
+    write_json(metadata_file, metadata)
+    metadata["metadata_path"] = str(metadata_file)
 
 
 def _filter_unit_frame(normalized: pd.DataFrame, unit: UnitPlan) -> pd.DataFrame:
@@ -600,9 +757,7 @@ def _download_symbol_date_tick_depth(
                 stop_ratio=quota_stop_ratio,
                 safety_multiplier=quota_safety_multiplier,
             )
-            metadata["quota_guard"]["available"] = bool(
-                metadata["quota_guard"].get("available") or guard.get("available")
-            )
+            _mark_quota_guard_availability(metadata, guard)
             batch_info["quota_before"] = quota_before
             batch_info["quota_guard"] = guard
             if guard["blocked"]:
@@ -632,28 +787,16 @@ def _download_symbol_date_tick_depth(
             started_at = utc_now_iso()
             started_clock = perf_counter()
             try:
-                batch_symbols = batch.symbols
-                batch_trade_date = batch.trade_date
-
-                def fetch_batch(
-                    symbols: Sequence[str] = batch_symbols,
-                    trade_date: str = batch_trade_date,
-                ) -> pd.DataFrame:
-                    return provider.get_price(
-                        order_book_ids=symbols,
-                        start_date=trade_date,
-                        end_date=trade_date,
-                        fields=fields,
-                        adjust_type=adjust_type,
-                        time_slice=time_slice,
-                    )
-
-                result = retry_provider_call(
-                    "get_price",
-                    fetch_batch,
-                    max_attempts=retry_max_attempts,
-                    backoff_seconds=retry_backoff_seconds,
-                    max_backoff_seconds=retry_max_backoff_seconds,
+                result = _fetch_provider_tick_frame(
+                    provider=provider,
+                    symbols=batch.symbols,
+                    trade_date=batch.trade_date,
+                    fields=fields,
+                    adjust_type=adjust_type,
+                    time_slice=time_slice,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    retry_max_backoff_seconds=retry_max_backoff_seconds,
                 )
                 raw = result.value
                 quota_after = _quota_snapshot(provider)
@@ -748,12 +891,13 @@ def _download_symbol_date_tick_depth(
                 if category == "quota" or not continue_on_error:
                     raise
     finally:
-        metadata["quota_after"] = _quota_snapshot(provider)
-        metadata["audit_status_counts"] = summarize_audit(audit_records)
-        if audit_records:
-            write_audit_records(audit_file, audit_records)
-        write_json(metadata_file, metadata)
-        metadata["metadata_path"] = str(metadata_file)
+        _finalize_download_run(
+            provider=provider,
+            metadata=metadata,
+            audit_records=audit_records,
+            audit_file=audit_file,
+            metadata_file=metadata_file,
+        )
 
     if metadata["failed_batches"] and not continue_on_error:
         raise DownloadError("Download failed before completion.")
@@ -974,9 +1118,7 @@ def _download_batch_tick_depth(
                 stop_ratio=quota_stop_ratio,
                 safety_multiplier=quota_safety_multiplier,
             )
-            metadata["quota_guard"]["available"] = bool(
-                metadata["quota_guard"].get("available") or guard.get("available")
-            )
+            _mark_quota_guard_availability(metadata, guard)
             batch_info["quota_before"] = quota_before
             batch_info["quota_guard"] = guard
             if guard["blocked"]:
@@ -1008,28 +1150,16 @@ def _download_batch_tick_depth(
             started_at = utc_now_iso()
             started_clock = perf_counter()
             try:
-                plan_symbols = plan.symbols
-                plan_trade_date = plan.trade_date
-
-                def fetch_plan(
-                    symbols: Sequence[str] = plan_symbols,
-                    trade_date: str = plan_trade_date,
-                ) -> pd.DataFrame:
-                    return provider.get_price(
-                        order_book_ids=symbols,
-                        start_date=trade_date,
-                        end_date=trade_date,
-                        fields=fields,
-                        adjust_type=adjust_type,
-                        time_slice=time_slice,
-                    )
-
-                result = retry_provider_call(
-                    "get_price",
-                    fetch_plan,
-                    max_attempts=retry_max_attempts,
-                    backoff_seconds=retry_backoff_seconds,
-                    max_backoff_seconds=retry_max_backoff_seconds,
+                result = _fetch_provider_tick_frame(
+                    provider=provider,
+                    symbols=plan.symbols,
+                    trade_date=plan.trade_date,
+                    fields=fields,
+                    adjust_type=adjust_type,
+                    time_slice=time_slice,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    retry_max_backoff_seconds=retry_max_backoff_seconds,
                 )
                 raw = result.value
                 quota_after = _quota_snapshot(provider)
@@ -1133,12 +1263,13 @@ def _download_batch_tick_depth(
                 if category == "quota" or not continue_on_error:
                     raise
     finally:
-        metadata["quota_after"] = _quota_snapshot(provider)
-        metadata["audit_status_counts"] = summarize_audit(audit_records)
-        if audit_records:
-            write_audit_records(audit_file, audit_records)
-        write_json(metadata_file, metadata)
-        metadata["metadata_path"] = str(metadata_file)
+        _finalize_download_run(
+            provider=provider,
+            metadata=metadata,
+            audit_records=audit_records,
+            audit_file=audit_file,
+            metadata_file=metadata_file,
+        )
 
     if metadata["failed_batches"] and not continue_on_error:
         raise DownloadError("Download failed before completion.")
@@ -1174,75 +1305,94 @@ def download_tick_depth(
     audit_output: str | Path | None = None,
 ) -> dict[str, Any]:
     """Download tick-depth snapshots into parquet parts and write run metadata."""
-    selected_fields = list(fields or DEFAULT_TICK_DEPTH_FIELDS)
-    if quota_stop_ratio <= 0 or quota_stop_ratio > 1:
-        raise ValueError("quota_stop_ratio must be in (0, 1].")
-    if quota_safety_multiplier <= 0:
-        raise ValueError("quota_safety_multiplier must be positive.")
-    layout = normalize_raw_layout(raw_layout)
-    normalized_calendar = normalize_calendar(calendar)
-    trade_dates, calendar_source = _resolve_trade_dates(
-        provider=provider,
-        start_date=start_date,
-        end_date=end_date,
-        calendar=normalized_calendar,
-    )
-    storage = _storage_settings(
-        raw_layout=layout,
-        parquet_engine=parquet_engine,
-        parquet_compression=parquet_compression,
-        parquet_compression_level=parquet_compression_level,
-    )
-    if layout == "batch":
-        return _download_batch_tick_depth(
-            provider=provider,
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            output_root=output_root,
-            fields=selected_fields,
-            batch_size=batch_size,
-            resume=resume,
-            continue_on_error=continue_on_error,
-            dry_run=dry_run,
-            metadata_kind=metadata_kind,
-            storage=storage,
-            trade_dates=trade_dates,
-            calendar_source=calendar_source,
-            adjust_type=adjust_type,
-            time_slice=time_slice,
-            retry_max_attempts=retry_max_attempts,
-            retry_backoff_seconds=retry_backoff_seconds,
-            retry_max_backoff_seconds=retry_max_backoff_seconds,
-            quota_guard_enabled=quota_guard,
-            quota_stop_ratio=quota_stop_ratio,
-            quota_safety_multiplier=quota_safety_multiplier,
-            audit_output=audit_output,
-        )
-    return _download_symbol_date_tick_depth(
-        provider=provider,
+    config = _build_download_config(
         symbols=symbols,
         start_date=start_date,
         end_date=end_date,
         output_root=output_root,
-        fields=selected_fields,
+        fields=fields,
         batch_size=batch_size,
         resume=resume,
         continue_on_error=continue_on_error,
         dry_run=dry_run,
         metadata_kind=metadata_kind,
-        storage=storage,
-        trade_dates=trade_dates,
-        calendar_source=calendar_source,
+        raw_layout=raw_layout,
+        calendar=calendar,
         adjust_type=adjust_type,
         time_slice=time_slice,
+        parquet_engine=parquet_engine,
+        parquet_compression=parquet_compression,
+        parquet_compression_level=parquet_compression_level,
         retry_max_attempts=retry_max_attempts,
         retry_backoff_seconds=retry_backoff_seconds,
         retry_max_backoff_seconds=retry_max_backoff_seconds,
-        quota_guard_enabled=quota_guard,
+        quota_guard=quota_guard,
         quota_stop_ratio=quota_stop_ratio,
         quota_safety_multiplier=quota_safety_multiplier,
         audit_output=audit_output,
+    )
+    trade_dates, calendar_source = _resolve_trade_dates(
+        provider=provider,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        calendar=config.calendar,
+    )
+    storage = _storage_settings(
+        raw_layout=config.raw_layout,
+        parquet_engine=config.parquet_engine,
+        parquet_compression=config.parquet_compression,
+        parquet_compression_level=config.parquet_compression_level,
+    )
+    if config.raw_layout == "batch":
+        return _download_batch_tick_depth(
+            provider=provider,
+            symbols=config.symbols,
+            start_date=config.start_date,
+            end_date=config.end_date,
+            output_root=config.output_root,
+            fields=config.fields,
+            batch_size=config.batch_size,
+            resume=config.resume,
+            continue_on_error=config.continue_on_error,
+            dry_run=config.dry_run,
+            metadata_kind=config.metadata_kind,
+            storage=storage,
+            trade_dates=trade_dates,
+            calendar_source=calendar_source,
+            adjust_type=config.adjust_type,
+            time_slice=config.time_slice,
+            retry_max_attempts=config.retry_max_attempts,
+            retry_backoff_seconds=config.retry_backoff_seconds,
+            retry_max_backoff_seconds=config.retry_max_backoff_seconds,
+            quota_guard_enabled=config.quota_guard,
+            quota_stop_ratio=config.quota_stop_ratio,
+            quota_safety_multiplier=config.quota_safety_multiplier,
+            audit_output=config.audit_output,
+        )
+    return _download_symbol_date_tick_depth(
+        provider=provider,
+        symbols=config.symbols,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        output_root=config.output_root,
+        fields=config.fields,
+        batch_size=config.batch_size,
+        resume=config.resume,
+        continue_on_error=config.continue_on_error,
+        dry_run=config.dry_run,
+        metadata_kind=config.metadata_kind,
+        storage=storage,
+        trade_dates=trade_dates,
+        calendar_source=calendar_source,
+        adjust_type=config.adjust_type,
+        time_slice=config.time_slice,
+        retry_max_attempts=config.retry_max_attempts,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+        retry_max_backoff_seconds=config.retry_max_backoff_seconds,
+        quota_guard_enabled=config.quota_guard,
+        quota_stop_ratio=config.quota_stop_ratio,
+        quota_safety_multiplier=config.quota_safety_multiplier,
+        audit_output=config.audit_output,
     )
 
 

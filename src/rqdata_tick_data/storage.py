@@ -24,10 +24,6 @@ def now_stamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
-def cache_dataset_root(base: str | Path, dataset: str) -> Path:
-    return Path(base) / dataset
-
-
 def batch_part_path(dataset_root: str | Path, trade_date: str, batch_number: int) -> Path:
     return (
         Path(dataset_root)

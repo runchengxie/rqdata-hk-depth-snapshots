@@ -7,139 +7,331 @@ from typing import Any
 
 import pandas as pd
 
-from rqdata_tick_data.storage import load_parquet_parts, metadata_path, write_json
+from rqdata_tick_data.quality import (
+    SESSION_PHASES,
+    append_quality_check,
+    numeric,
+    quality_verdict,
+    quote_ladder_flags,
+    session_phase_counts,
+)
+from rqdata_tick_data.storage import (
+    atomic_write_parquet,
+    load_parquet_parts,
+    metadata_path,
+    write_json,
+)
 
 REQUIRED_RAW_COLUMNS = ("order_book_id", "datetime")
-SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
-FAIL_ON_SEVERITIES = ("none", "info", "warning", "error")
+CUMULATIVE_RESET_RATIO = 0.50
 
 
-def _numeric(df: pd.DataFrame, column: str) -> pd.Series:
-    return pd.to_numeric(df[column], errors="coerce")
+def _clean_scalar(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
 
 
-def _normalize_fail_on_severity(value: object) -> str:
-    text = str(value or "error").strip().lower()
-    if not text:
-        return "error"
-    if text not in FAIL_ON_SEVERITIES:
-        raise ValueError("fail_on_severity must be one of: none, info, warning, error.")
-    return text
+def _clean_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{key: _clean_scalar(value) for key, value in row.items()} for row in records]
 
 
-def _append_quality_check(
-    checks: list[dict[str, Any]],
-    *,
-    check: str,
-    severity: str,
-    message: str,
-    **extra: Any,
-) -> None:
-    checks.append({"check": check, "severity": severity, "message": message, **extra})
+def _prepare_work(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+    if "order_book_id" not in work.columns:
+        work["order_book_id"] = pd.NA
+    if "datetime" in work.columns:
+        work["_timestamp"] = pd.to_datetime(work["datetime"], errors="coerce")
+    else:
+        work["_timestamp"] = pd.Series(pd.NaT, index=work.index)
+    if "trading_date" not in work.columns:
+        work["trading_date"] = work["_timestamp"].dt.strftime("%Y%m%d")
+    else:
+        work["trading_date"] = work["trading_date"].astype("string")
+    return work
 
 
-def _quality_verdict(
-    checks: list[dict[str, Any]],
-    *,
-    fail_on_severity: str,
-) -> dict[str, Any]:
-    threshold = _normalize_fail_on_severity(fail_on_severity)
-    severity_counts = {
-        severity: sum(1 for check in checks if check.get("severity") == severity)
-        for severity in ("error", "warning", "info")
-    }
-    issue_count = int(sum(severity_counts.values()))
-    overall = "none"
-    for severity in ("error", "warning", "info"):
-        if severity_counts[severity]:
-            overall = severity
-            break
-    failing = 0
-    if threshold != "none":
-        threshold_rank = SEVERITY_RANK[threshold]
-        failing = sum(
-            1
-            for check in checks
-            if SEVERITY_RANK.get(str(check.get("severity")), 0) >= threshold_rank
-        )
+def _duplicate_stats(frame: pd.DataFrame) -> dict[str, int]:
+    if not {"order_book_id", "datetime"}.issubset(frame.columns) or frame.empty:
+        return {
+            "duplicate_row_count": 0,
+            "duplicate_key_count": 0,
+            "exact_duplicate_row_count": 0,
+            "same_timestamp_conflict_count": 0,
+        }
+    key_cols = ["order_book_id", "datetime"]
+    duplicated = frame.duplicated(key_cols, keep=False)
+    duplicate_key_count = int(frame.loc[duplicated, key_cols].drop_duplicates().shape[0])
+    exact_duplicate_row_count = int(frame.duplicated(keep=False).sum())
+    conflict_count = 0
+    if duplicated.any():
+        value_cols = [
+            column
+            for column in frame.columns
+            if column not in {"_timestamp"} and column not in key_cols
+        ]
+        if value_cols:
+            grouped = frame.loc[duplicated, [*key_cols, *value_cols]].groupby(
+                key_cols,
+                dropna=False,
+            )
+            for _, group in grouped:
+                unique_counts = group[value_cols].nunique(dropna=False)
+                if bool((unique_counts > 1).any()):
+                    conflict_count += 1
     return {
-        "overall_severity": overall,
-        "issue_count": issue_count,
-        "severity_counts": severity_counts,
-        "fail_on_severity": threshold,
-        "gate_triggered": bool(failing),
-        "gate_status": "fail" if failing else "pass",
-        "failing_issue_count": int(failing),
-        "sample_failing_checks": [
-            str(check.get("check"))
-            for check in checks
-            if threshold != "none"
-            and SEVERITY_RANK.get(str(check.get("severity")), 0) >= SEVERITY_RANK[threshold]
-        ][:5],
+        "duplicate_row_count": int(duplicated.sum()),
+        "duplicate_key_count": duplicate_key_count,
+        "exact_duplicate_row_count": exact_duplicate_row_count,
+        "same_timestamp_conflict_count": int(conflict_count),
     }
+
+
+def _timestamp_non_monotonic_count(frame: pd.DataFrame) -> int:
+    if "_timestamp" not in frame.columns:
+        return 0
+    timestamps = frame["_timestamp"]
+    diffs = timestamps.diff()
+    return int((diffs < pd.Timedelta(0)).sum())
+
+
+def _missing_then_resumed_count(values: pd.Series) -> int:
+    seen_valid = False
+    in_missing_after_valid = False
+    resumed = 0
+    for value in values:
+        if pd.isna(value):
+            if seen_valid:
+                in_missing_after_valid = True
+            continue
+        if in_missing_after_valid:
+            resumed += 1
+            in_missing_after_valid = False
+        seen_valid = True
+    return resumed
+
+
+def _cumulative_stats(frame: pd.DataFrame, column: str) -> dict[str, int]:
+    if column not in frame.columns:
+        return {
+            "negative_count": 0,
+            "decrease_count": 0,
+            "large_drop_count": 0,
+            "missing_then_resumed_count": 0,
+        }
+    ordered = (
+        frame.sort_values("_timestamp", na_position="last")
+        if "_timestamp" in frame
+        else frame
+    )
+    values = numeric(ordered, column)
+    diffs = values.diff()
+    previous = values.shift()
+    decreases = diffs < 0
+    large_drops = decreases & (previous > 0) & (
+        (diffs.abs() >= previous.abs() * CUMULATIVE_RESET_RATIO)
+        | (values <= previous * CUMULATIVE_RESET_RATIO)
+    )
+    return {
+        "negative_count": int((values < 0).sum()),
+        "decrease_count": int(decreases.sum()),
+        "large_drop_count": int(large_drops.sum()),
+        "missing_then_resumed_count": _missing_then_resumed_count(values),
+    }
+
+
+def _quote_stats(frame: pd.DataFrame) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "quote_coverage_ratio": None,
+        "bad_quote_ratio": None,
+        "best_bid_missing_count": 0,
+        "best_ask_missing_count": 0,
+        "best_spread_cross_count": 0,
+        "best_spread_zero_count": 0,
+        "ask_ladder_inversion_count": 0,
+        "bid_ladder_inversion_count": 0,
+        "negative_depth_volume_count": 0,
+        "quote_ladder_invalid_count": 0,
+    }
+    if {"a1", "b1"}.issubset(frame.columns):
+        ask = numeric(frame, "a1")
+        bid = numeric(frame, "b1")
+        ask_missing = ask.isna() | (ask <= 0)
+        bid_missing = bid.isna() | (bid <= 0)
+        positive = ~ask_missing & ~bid_missing
+        flags = quote_ladder_flags(frame)
+        stats.update(
+            {
+                "quote_coverage_ratio": float(positive.mean()) if len(frame) else None,
+                "bad_quote_ratio": (
+                    float((~positive | flags["crossed_best_spread"]).mean())
+                    if len(frame)
+                    else None
+                ),
+                "best_bid_missing_count": int(bid_missing.sum()),
+                "best_ask_missing_count": int(ask_missing.sum()),
+                "best_spread_cross_count": int(flags["crossed_best_spread"].sum()),
+                "best_spread_zero_count": int(flags["zero_best_spread"].sum()),
+                "ask_ladder_inversion_count": int(flags["ask_ladder_inversion"].sum()),
+                "bid_ladder_inversion_count": int(flags["bid_ladder_inversion"].sum()),
+                "negative_depth_volume_count": int(flags["negative_depth_volume"].sum()),
+                "quote_ladder_invalid_count": int(flags["quote_ladder_invalid"].sum()),
+            }
+        )
+    return stats
+
+
+def _unit_check_names(row: dict[str, Any]) -> list[str]:
+    checks = []
+    metric_to_check = {
+        "timestamp_parse_failure_count": "timestamp_parse_failures",
+        "duplicate_key_count": "duplicate_symbol_timestamp_rows",
+        "same_timestamp_conflict_count": "same_timestamp_conflicts",
+        "timestamp_non_monotonic_count": "timestamp_non_monotonic",
+        "best_spread_cross_count": "invalid_best_quote_spread",
+        "ask_ladder_inversion_count": "quote_ladder_invalid",
+        "bid_ladder_inversion_count": "quote_ladder_invalid",
+        "negative_depth_volume_count": "negative_depth_volume",
+        "negative_volume_count": "negative_volume_count",
+        "negative_turnover_count": "negative_turnover_count",
+        "volume_decrease_count": "volume_decrease_count",
+        "turnover_decrease_count": "turnover_decrease_count",
+        "volume_large_drop_count": "volume_large_drop_count",
+        "turnover_large_drop_count": "turnover_large_drop_count",
+        "volume_missing_then_resumed_count": "volume_missing_then_resumed",
+        "turnover_missing_then_resumed_count": "turnover_missing_then_resumed",
+        "outside_session_rows": "session_time_outlier",
+    }
+    for metric, check in metric_to_check.items():
+        if int(row.get(metric) or 0) > 0 and check not in checks:
+            checks.append(check)
+    return checks
+
+
+def _unit_diagnostics(work: pd.DataFrame, sample_limit: int = 5) -> list[dict[str, Any]]:
+    if work.empty:
+        return []
+    diagnostics: list[dict[str, Any]] = []
+    grouped = work.groupby(["order_book_id", "trading_date"], sort=True, dropna=False)
+    for (symbol, trade_date), group in grouped:
+        timestamps = group["_timestamp"]
+        duplicate_stats = _duplicate_stats(group)
+        quote_stats = _quote_stats(group)
+        volume_stats = _cumulative_stats(group, "volume")
+        turnover_stats = _cumulative_stats(group, "total_turnover")
+        phase_counts = session_phase_counts(group["_timestamp"])
+        row: dict[str, Any] = {
+            "order_book_id": _clean_scalar(symbol),
+            "trading_date": _clean_scalar(trade_date),
+            "row_count": int(len(group)),
+            "timestamp_start": (
+                timestamps.min().isoformat() if timestamps.notna().any() else None
+            ),
+            "timestamp_end": (
+                timestamps.max().isoformat() if timestamps.notna().any() else None
+            ),
+            "timestamp_parse_failure_count": int(timestamps.isna().sum()),
+            "timestamp_non_monotonic_count": _timestamp_non_monotonic_count(group),
+            **duplicate_stats,
+            **quote_stats,
+            "negative_volume_count": volume_stats["negative_count"],
+            "volume_decrease_count": volume_stats["decrease_count"],
+            "volume_large_drop_count": volume_stats["large_drop_count"],
+            "volume_missing_then_resumed_count": volume_stats["missing_then_resumed_count"],
+            "negative_turnover_count": turnover_stats["negative_count"],
+            "turnover_decrease_count": turnover_stats["decrease_count"],
+            "turnover_large_drop_count": turnover_stats["large_drop_count"],
+            "turnover_missing_then_resumed_count": turnover_stats["missing_then_resumed_count"],
+            **{f"{phase}_rows": phase_counts[phase] for phase in SESSION_PHASES},
+        }
+        row["check_names"] = _unit_check_names(row)
+        row["severity"] = "warning" if row["check_names"] else "none"
+        sample_cols = [
+            column
+            for column in (
+                "order_book_id",
+                "trading_date",
+                "datetime",
+                "last",
+                "a1",
+                "b1",
+                "volume",
+                "total_turnover",
+            )
+            if column in group.columns
+        ]
+        row["sample_rows"] = _clean_records(
+            group.loc[:, sample_cols].head(sample_limit).to_dict("records")
+        )
+        diagnostics.append(row)
+    return diagnostics
+
+
+def _sum_units(units: list[dict[str, Any]], key: str) -> int:
+    return int(sum(int(row.get(key) or 0) for row in units))
 
 
 def _build_quality_checks(report: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     if report["row_count"] == 0:
-        _append_quality_check(
+        append_quality_check(
             checks,
             check="empty_dataset",
             severity="error",
             message="Raw tick dataset has no rows.",
+            include_zero=True,
         )
     if report["missing_required_columns"]:
-        _append_quality_check(
+        append_quality_check(
             checks,
             check="missing_required_columns",
             severity="error",
             message="Raw tick dataset is missing identity columns.",
             columns=list(report["missing_required_columns"]),
+            include_zero=True,
         )
-    if int(report.get("timestamp_parse_failure_count") or 0):
-        _append_quality_check(
+    warning_metrics = {
+        "timestamp_parse_failure_count": "timestamp_parse_failures",
+        "duplicate_key_count": "duplicate_symbol_timestamp_rows",
+        "same_timestamp_conflict_count": "same_timestamp_conflicts",
+        "timestamp_non_monotonic_count": "timestamp_non_monotonic",
+        "best_spread_cross_count": "invalid_best_quote_spread",
+        "quote_ladder_invalid_count": "quote_ladder_invalid",
+        "negative_depth_volume_count": "negative_depth_volume",
+        "negative_volume_count": "negative_volume_count",
+        "negative_turnover_count": "negative_turnover_count",
+        "volume_decrease_count": "volume_decrease_count",
+        "turnover_decrease_count": "turnover_decrease_count",
+        "volume_large_drop_count": "volume_large_drop_count",
+        "turnover_large_drop_count": "turnover_large_drop_count",
+        "volume_missing_then_resumed_count": "volume_missing_then_resumed",
+        "turnover_missing_then_resumed_count": "turnover_missing_then_resumed",
+        "outside_session_rows": "session_time_outlier",
+    }
+    messages = {
+        "timestamp_parse_failures": "Some tick timestamps could not be parsed.",
+        "duplicate_symbol_timestamp_rows": "Duplicate order_book_id/datetime keys were found.",
+        "same_timestamp_conflicts": "Some duplicate timestamps contain conflicting values.",
+        "timestamp_non_monotonic": "Timestamps move backwards inside some symbol-date units.",
+        "invalid_best_quote_spread": "Best ask is below best bid for some rows.",
+        "quote_ladder_invalid": "Quote depth ladder rules were violated.",
+        "negative_depth_volume": "Quote depth volume fields contain negative values.",
+        "session_time_outlier": "Tick timestamps fall outside the accepted HK tick session window.",
+    }
+    for metric, check in warning_metrics.items():
+        affected = int(report.get(metric) or 0)
+        append_quality_check(
             checks,
-            check="timestamp_parse_failures",
+            check=check,
             severity="warning",
-            message="Some tick timestamps could not be parsed.",
-            count=int(report["timestamp_parse_failure_count"]),
+            message=messages.get(check, f"{metric} is non-zero."),
+            affected=affected,
         )
-    if int(report.get("duplicate_key_count") or 0):
-        _append_quality_check(
-            checks,
-            check="duplicate_symbol_timestamp_rows",
-            severity="warning",
-            message="Duplicate order_book_id/datetime keys were found.",
-            duplicate_keys=int(report["duplicate_key_count"]),
-            duplicate_rows=int(report["duplicate_row_count"]),
-        )
-    if int(report.get("invalid_best_spread_count") or 0):
-        _append_quality_check(
-            checks,
-            check="invalid_best_quote_spread",
-            severity="warning",
-            message="Best ask is below best bid for some rows.",
-            rows=int(report["invalid_best_spread_count"]),
-            sample_groups=list(report["invalid_best_spread_groups"]),
-        )
-    for metric in ("negative_volume_count", "negative_turnover_count"):
-        if int(report.get(metric) or 0):
-            _append_quality_check(
-                checks,
-                check=metric,
-                severity="warning",
-                message=f"{metric} is non-zero.",
-                rows=int(report[metric]),
-            )
-    for metric in ("volume_decrease_count", "turnover_decrease_count"):
-        if int(report.get(metric) or 0):
-            _append_quality_check(
-                checks,
-                check=metric,
-                severity="warning",
-                message=f"{metric} is non-zero for cumulative provider fields.",
-                rows=int(report[metric]),
-            )
     return checks
 
 
@@ -160,14 +352,31 @@ def inspect_raw_health(
         "field_missing_rates": {},
         "duplicate_row_count": 0,
         "duplicate_key_count": 0,
+        "exact_duplicate_row_count": 0,
+        "same_timestamp_conflict_count": 0,
+        "timestamp_non_monotonic_count": 0,
         "invalid_best_spread_count": 0,
         "invalid_best_spread_groups": [],
         "quote_coverage_ratio": None,
         "bad_quote_ratio": None,
+        "best_bid_missing_count": 0,
+        "best_ask_missing_count": 0,
+        "best_spread_cross_count": 0,
+        "best_spread_zero_count": 0,
+        "ask_ladder_inversion_count": 0,
+        "bid_ladder_inversion_count": 0,
+        "quote_ladder_invalid_count": 0,
+        "negative_depth_volume_count": 0,
         "negative_volume_count": None,
         "negative_turnover_count": None,
         "volume_decrease_count": None,
         "turnover_decrease_count": None,
+        "volume_large_drop_count": 0,
+        "turnover_large_drop_count": 0,
+        "volume_missing_then_resumed_count": 0,
+        "turnover_missing_then_resumed_count": 0,
+        **{f"{phase}_rows": 0 for phase in SESSION_PHASES},
+        "unit_diagnostics": [],
         "warnings": [],
         "failures": [],
         "quality_checks": [],
@@ -179,9 +388,10 @@ def inspect_raw_health(
         report["failures"].append("empty_dataset")
         report["status"] = "fail"
         report["quality_checks"] = _build_quality_checks(report)
-        report["quality_verdict"] = _quality_verdict(
+        report["quality_verdict"] = quality_verdict(
             report["quality_checks"],
             fail_on_severity=fail_on_severity,
+            include_sample_failing_checks=True,
         )
         return report
 
@@ -191,76 +401,87 @@ def inspect_raw_health(
         report["failures"].append("missing_required_columns")
         report["status"] = "fail"
 
+    work = _prepare_work(df)
     if "order_book_id" in df.columns:
         report["symbol_count"] = int(df["order_book_id"].nunique(dropna=True))
-    if "trading_date" in df.columns:
-        report["date_count"] = int(df["trading_date"].nunique(dropna=True))
+    if "trading_date" in work.columns:
+        report["date_count"] = int(work["trading_date"].nunique(dropna=True))
 
-    if "datetime" in df.columns:
-        timestamps = pd.to_datetime(df["datetime"], errors="coerce")
-        parse_failures = int(timestamps.isna().sum())
-        report["timestamp_parse_failure_count"] = parse_failures
-        if parse_failures:
-            report["warnings"].append("timestamp_parse_failures")
-        if timestamps.notna().any():
-            report["timestamp_start"] = timestamps.min().isoformat()
-            report["timestamp_end"] = timestamps.max().isoformat()
+    timestamps = work["_timestamp"]
+    report["timestamp_parse_failure_count"] = int(timestamps.isna().sum())
+    if timestamps.notna().any():
+        report["timestamp_start"] = timestamps.min().isoformat()
+        report["timestamp_end"] = timestamps.max().isoformat()
 
     report["field_missing_rates"] = {
         str(column): float(rate) for column, rate in df.isna().mean(numeric_only=False).items()
     }
 
-    if all(col in df.columns for col in REQUIRED_RAW_COLUMNS):
-        duplicated = df.duplicated(["order_book_id", "datetime"], keep=False)
-        report["duplicate_row_count"] = int(duplicated.sum())
-        if duplicated.any():
-            report["duplicate_key_count"] = int(
-                df.loc[duplicated, ["order_book_id", "datetime"]].drop_duplicates().shape[0]
-            )
-            report["warnings"].append("duplicate_symbol_timestamp_rows")
+    units = _unit_diagnostics(work)
+    report["unit_diagnostics"] = units
+    global_duplicate_stats = _duplicate_stats(work)
+    report.update(global_duplicate_stats)
+    report.update(_quote_stats(work))
+    report["invalid_best_spread_count"] = report["best_spread_cross_count"]
 
-    if {"a1", "b1"}.issubset(df.columns):
-        a1 = _numeric(df, "a1")
-        b1 = _numeric(df, "b1")
-        positive = (a1 > 0) & (b1 > 0)
-        invalid_spread = positive & (a1 < b1)
-        report["quote_coverage_ratio"] = float(positive.mean())
-        report["bad_quote_ratio"] = float((~positive | invalid_spread).mean())
-        report["invalid_best_spread_count"] = int(invalid_spread.sum())
-        if invalid_spread.any():
-            group_cols = [col for col in ("order_book_id", "trading_date") if col in df.columns]
-            if group_cols:
-                groups = (
-                    df.loc[invalid_spread, group_cols].drop_duplicates().head(20).to_dict("records")
-                )
-                report["invalid_best_spread_groups"] = groups
-            report["warnings"].append("invalid_best_quote_spread")
+    if report["best_spread_cross_count"]:
+        group_cols = [col for col in ("order_book_id", "trading_date") if col in work.columns]
+        flags = quote_ladder_flags(work)
+        groups = work.loc[flags["crossed_best_spread"], group_cols].drop_duplicates().head(20)
+        report["invalid_best_spread_groups"] = _clean_records(groups.to_dict("records"))
 
-    group_cols = [col for col in ("order_book_id", "trading_date") if col in df.columns]
-    sort_cols = [col for col in (*group_cols, "datetime") if col in df.columns]
-    checked = df.sort_values(sort_cols) if sort_cols else df
-    for column, negative_key, decrease_key in (
-        ("volume", "negative_volume_count", "volume_decrease_count"),
-        ("total_turnover", "negative_turnover_count", "turnover_decrease_count"),
+    for metric in (
+        "timestamp_non_monotonic_count",
+        "negative_volume_count",
+        "negative_turnover_count",
+        "volume_decrease_count",
+        "turnover_decrease_count",
+        "volume_large_drop_count",
+        "turnover_large_drop_count",
+        "volume_missing_then_resumed_count",
+        "turnover_missing_then_resumed_count",
     ):
-        if column not in checked.columns:
-            continue
-        values = _numeric(checked, column)
-        report[negative_key] = int((values < 0).sum())
-        if group_cols:
-            diffs = values.groupby([checked[col] for col in group_cols]).diff()
-        else:
-            diffs = values.diff()
-        report[decrease_key] = int((diffs < 0).sum())
-        if report[negative_key] or report[decrease_key]:
-            report["warnings"].append(f"{column}_anomaly")
+        report[metric] = _sum_units(units, metric)
+    for phase in SESSION_PHASES:
+        report[f"{phase}_rows"] = _sum_units(units, f"{phase}_rows")
+
+    warning_metrics = [
+        "timestamp_parse_failure_count",
+        "duplicate_key_count",
+        "same_timestamp_conflict_count",
+        "timestamp_non_monotonic_count",
+        "best_spread_cross_count",
+        "quote_ladder_invalid_count",
+        "negative_depth_volume_count",
+        "negative_volume_count",
+        "negative_turnover_count",
+        "volume_decrease_count",
+        "turnover_decrease_count",
+        "volume_large_drop_count",
+        "turnover_large_drop_count",
+        "volume_missing_then_resumed_count",
+        "turnover_missing_then_resumed_count",
+        "outside_session_rows",
+    ]
+    report["warnings"] = [metric for metric in warning_metrics if int(report.get(metric) or 0)]
 
     report["quality_checks"] = _build_quality_checks(report)
-    report["quality_verdict"] = _quality_verdict(
+    report["quality_verdict"] = quality_verdict(
         report["quality_checks"],
         fail_on_severity=fail_on_severity,
+        include_sample_failing_checks=True,
     )
     return report
+
+
+def _write_unit_diagnostics(path: str | Path, units: list[dict[str, Any]]) -> Path:
+    target = Path(path)
+    frame = pd.DataFrame(units)
+    if target.suffix == ".parquet":
+        return atomic_write_parquet(frame, target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(target, index=False)
+    return target
 
 
 def write_health_report(
@@ -268,8 +489,12 @@ def write_health_report(
     output_json: str | Path | None = None,
     *,
     fail_on_severity: str = "error",
+    units_output: str | Path | None = None,
 ) -> dict[str, Any]:
     report = inspect_raw_health(input_root, fail_on_severity=fail_on_severity)
+    if units_output is not None:
+        units_path = _write_unit_diagnostics(units_output, report["unit_diagnostics"])
+        report["unit_diagnostics_path"] = str(units_path)
     path = (
         Path(output_json) if output_json else metadata_path(Path(input_root) / "health", "health")
     )

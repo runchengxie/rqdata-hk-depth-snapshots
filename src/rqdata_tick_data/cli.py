@@ -83,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     health = subparsers.add_parser("health", help="Inspect raw parquet cache health.")
     health.add_argument("--input", required=True)
     health.add_argument("--out-json")
+    health.add_argument("--out-units")
     health.add_argument(
         "--fail-on-severity",
         choices=["none", "info", "warning", "error"],
@@ -137,128 +138,156 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _handle_probe(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    selected_provider = provider or _provider(args.fake_provider)
+    result = probe_tick_depth(
+        provider=selected_provider,
+        symbol=args.symbol,
+        trade_date=args.date,
+        fields=parse_fields(args.fields),
+        output_root=Path(args.out),
+        adjust_type=args.adjust_type,
+        time_slice=args.time_slice,
+    )
+    _print_json(result)
+    return 0
+
+
+def _handle_download(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    symbols = parse_symbols(args.symbols, args.symbols_file)
+    selected_provider = None
+    if not args.dry_run or args.fake_provider:
+        selected_provider = provider or _provider(args.fake_provider)
+    result = download_tick_depth(
+        provider=selected_provider,
+        symbols=symbols,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        output_root=Path(args.out),
+        fields=parse_fields(args.fields),
+        batch_size=args.batch_size,
+        adjust_type=args.adjust_type,
+        time_slice=args.time_slice,
+        calendar=args.calendar,
+        resume=args.resume,
+        continue_on_error=args.continue_on_error,
+        dry_run=args.dry_run,
+        raw_layout=args.raw_layout,
+        parquet_engine=args.parquet_engine,
+        parquet_compression=args.parquet_compression,
+        parquet_compression_level=args.parquet_compression_level,
+        retry_max_attempts=args.retry_max_attempts,
+        retry_backoff_seconds=args.retry_backoff_seconds,
+        retry_max_backoff_seconds=args.retry_max_backoff_seconds,
+        quota_guard=args.quota_guard,
+        quota_stop_ratio=args.quota_stop_ratio,
+        quota_safety_multiplier=args.quota_safety_multiplier,
+        audit_output=args.audit_output,
+    )
+    _print_json(result)
+    return 0
+
+
+def _handle_health(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    report = write_health_report(
+        args.input,
+        args.out_json,
+        fail_on_severity=args.fail_on_severity,
+        units_output=args.out_units,
+    )
+    print(format_health_summary(report))
+    print(f"report_path={report['report_path']}")
+    if report.get("unit_diagnostics_path"):
+        print(f"unit_diagnostics_path={report['unit_diagnostics_path']}")
+    verdict = report.get("quality_verdict")
+    if isinstance(verdict, dict) and verdict.get("gate_triggered"):
+        return 2
+    return 0 if report["status"] == "pass" else 1
+
+
+def _handle_aggregate_daily(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    metadata = write_daily_aggregate(args.input, args.output, args.meta_output)
+    _print_json(metadata)
+    return 0
+
+
+def _handle_emit_asset(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    if args.kind == "raw":
+        metadata = emit_raw_asset(args.source, args.output)
+    else:
+        metadata = emit_daily_asset(args.source, args.output)
+    _print_json(metadata)
+    return 0
+
+
+def _handle_quota(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    selected_provider = provider or _provider(args.fake_provider)
+    payload = augment_quota_payload(selected_provider.quota_snapshot())
+    if args.pretty:
+        print(format_quota_pretty(payload))
+    else:
+        print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    return 0
+
+
+def _handle_reconcile_daily(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    config = ReconcileConfig(
+        price_rtol=args.price_rtol,
+        price_atol=args.price_atol,
+        volume_rtol=args.volume_rtol,
+        volume_atol=args.volume_atol,
+        turnover_rtol=args.turnover_rtol,
+        turnover_atol=args.turnover_atol,
+        session_start=args.session_start,
+        session_end=args.session_end,
+        sample_limit=args.sample_limit,
+        fail_on_severity=args.fail_on_severity,
+        reference_policy=args.reference_policy,
+    )
+    report = write_reconciliation_report(
+        args.tick_input,
+        args.daily_asset_dir,
+        args.out,
+        config=config,
+    )
+    _print_json(
+        {
+            "report_path": report["report_path"],
+            "reference_policy": report["reference_policy"],
+            "summary": report["summary"],
+            "quality_verdict": report["quality_verdict"],
+            "status": report["status"],
+        }
+    )
+    verdict = report.get("quality_verdict")
+    if isinstance(verdict, dict) and verdict.get("gate_triggered"):
+        return 2
+    return 0 if report["status"] == "pass" else 1
+
+
+COMMAND_HANDLERS = {
+    "probe": _handle_probe,
+    "download": _handle_download,
+    "health": _handle_health,
+    "aggregate-daily": _handle_aggregate_daily,
+    "emit-asset": _handle_emit_asset,
+    "quota": _handle_quota,
+    "reconcile-daily": _handle_reconcile_daily,
+}
+
+
 def main(argv: list[str] | None = None, provider: TickDataProvider | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "probe":
-            selected_provider = provider or _provider(args.fake_provider)
-            result = probe_tick_depth(
-                provider=selected_provider,
-                symbol=args.symbol,
-                trade_date=args.date,
-                fields=parse_fields(args.fields),
-                output_root=Path(args.out),
-                adjust_type=args.adjust_type,
-                time_slice=args.time_slice,
-            )
-            _print_json(result)
-            return 0
-
-        if args.command == "download":
-            symbols = parse_symbols(args.symbols, args.symbols_file)
-            selected_provider = None
-            if not args.dry_run or args.fake_provider:
-                selected_provider = provider or _provider(args.fake_provider)
-            result = download_tick_depth(
-                provider=selected_provider,
-                symbols=symbols,
-                start_date=args.start_date,
-                end_date=args.end_date,
-                output_root=Path(args.out),
-                fields=parse_fields(args.fields),
-                batch_size=args.batch_size,
-                adjust_type=args.adjust_type,
-                time_slice=args.time_slice,
-                calendar=args.calendar,
-                resume=args.resume,
-                continue_on_error=args.continue_on_error,
-                dry_run=args.dry_run,
-                raw_layout=args.raw_layout,
-                parquet_engine=args.parquet_engine,
-                parquet_compression=args.parquet_compression,
-                parquet_compression_level=args.parquet_compression_level,
-                retry_max_attempts=args.retry_max_attempts,
-                retry_backoff_seconds=args.retry_backoff_seconds,
-                retry_max_backoff_seconds=args.retry_max_backoff_seconds,
-                quota_guard=args.quota_guard,
-                quota_stop_ratio=args.quota_stop_ratio,
-                quota_safety_multiplier=args.quota_safety_multiplier,
-                audit_output=args.audit_output,
-            )
-            _print_json(result)
-            return 0
-
-        if args.command == "health":
-            report = write_health_report(
-                args.input,
-                args.out_json,
-                fail_on_severity=args.fail_on_severity,
-            )
-            print(format_health_summary(report))
-            print(f"report_path={report['report_path']}")
-            verdict = report.get("quality_verdict")
-            if isinstance(verdict, dict) and verdict.get("gate_triggered"):
-                return 2
-            return 0 if report["status"] == "pass" else 1
-
-        if args.command == "aggregate-daily":
-            metadata = write_daily_aggregate(args.input, args.output, args.meta_output)
-            _print_json(metadata)
-            return 0
-
-        if args.command == "emit-asset":
-            if args.kind == "raw":
-                metadata = emit_raw_asset(args.source, args.output)
-            else:
-                metadata = emit_daily_asset(args.source, args.output)
-            _print_json(metadata)
-            return 0
-
-        if args.command == "quota":
-            selected_provider = provider or _provider(args.fake_provider)
-            payload = augment_quota_payload(selected_provider.quota_snapshot())
-            if args.pretty:
-                print(format_quota_pretty(payload))
-            else:
-                print(json.dumps(payload, indent=2, sort_keys=True, default=str))
-            return 0
-
-        if args.command == "reconcile-daily":
-            config = ReconcileConfig(
-                price_rtol=args.price_rtol,
-                price_atol=args.price_atol,
-                volume_rtol=args.volume_rtol,
-                volume_atol=args.volume_atol,
-                turnover_rtol=args.turnover_rtol,
-                turnover_atol=args.turnover_atol,
-                session_start=args.session_start,
-                session_end=args.session_end,
-                sample_limit=args.sample_limit,
-                fail_on_severity=args.fail_on_severity,
-                reference_policy=args.reference_policy,
-            )
-            report = write_reconciliation_report(
-                args.tick_input,
-                args.daily_asset_dir,
-                args.out,
-                config=config,
-            )
-            _print_json(
-                {
-                    "report_path": report["report_path"],
-                    "reference_policy": report["reference_policy"],
-                    "summary": report["summary"],
-                    "quality_verdict": report["quality_verdict"],
-                    "status": report["status"],
-                }
-            )
-            verdict = report.get("quality_verdict")
-            if isinstance(verdict, dict) and verdict.get("gate_triggered"):
-                return 2
-            return 0 if report["status"] == "pass" else 1
-
+        handler = COMMAND_HANDLERS.get(args.command)
+        if handler is not None:
+            return handler(args, provider)
     except Exception as exc:
         code, message = provider_error_to_exit(exc)
         print(message, file=sys.stderr)

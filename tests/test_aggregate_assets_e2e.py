@@ -32,6 +32,31 @@ def test_aggregate_metrics() -> None:
     assert out.loc[0, "spread_bps_p50"] > 0
     assert out.loc[0, "depth1_notional_p50"] > 0
     assert out.loc[0, "full_day_tick_vwap"] > 0
+    assert out.loc[0, "quote_quality_flag"] == "pass"
+    assert out.loc[0, "vwap_quality_flag"] == "pass"
+    assert bool(out.loc[0, "is_usable_for_research"])
+
+
+def test_aggregate_quality_flags_bad_quotes_and_vwap_decrease() -> None:
+    frame = pd.DataFrame(
+        {
+            "order_book_id": ["00001.XHKG", "00001.XHKG"],
+            "datetime": [pd.Timestamp("2025-03-03 09:30"), pd.Timestamp("2025-03-03 09:40")],
+            "trading_date": ["20250303", "20250303"],
+            "a1": [99.0, 100.2],
+            "a1_v": [1000, 1100],
+            "b1": [100.0, 100.0],
+            "b1_v": [900, 1000],
+            "volume": [1000, 500],
+            "total_turnover": [100000, 50000],
+        }
+    )
+
+    out = aggregate_daily_frame(frame)
+
+    assert out.loc[0, "quote_quality_flag"] == "fail"
+    assert out.loc[0, "vwap_quality_flag"] == "warning"
+    assert not bool(out.loc[0, "is_usable_for_cost_model"])
 
 
 def test_offline_end_to_end_and_assets(tmp_path) -> None:

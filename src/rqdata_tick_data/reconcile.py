@@ -10,11 +10,21 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from rqdata_tick_data.quality import (
+    append_quality_check,
+    quote_ladder_invalid,
+    sample_frame,
+    session_phase_counts,
+)
+from rqdata_tick_data.quality import (
+    numeric as quality_numeric,
+)
+from rqdata_tick_data.quality import (
+    quality_verdict as shared_quality_verdict,
+)
 from rqdata_tick_data.storage import discover_parquet_parts, load_parquet_parts, write_json
 from rqdata_tick_data.symbols import normalize_hk_order_book_id
 
-SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
-FAIL_ON_SEVERITIES = ("none", "info", "warning", "error")
 REFERENCE_POLICIES = ("raw-daily", "cross-clean")
 ECONOMIC_MISMATCH_CHECKS = {
     "tick_close_mismatch",
@@ -127,9 +137,7 @@ def _format_date(value: object) -> str | None:
 
 
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
-    if column not in frame.columns:
-        return pd.Series(float("nan"), index=frame.index, dtype="float64")
-    return pd.to_numeric(frame[column], errors="coerce")
+    return quality_numeric(frame, column)
 
 
 def _session_time(value: str) -> time:
@@ -146,41 +154,11 @@ def _quality_verdict(
     *,
     fail_on_severity: str,
 ) -> dict[str, Any]:
-    threshold = fail_on_severity.strip().lower()
-    if threshold not in FAIL_ON_SEVERITIES:
-        raise ValueError("fail_on_severity must be one of: none, info, warning, error.")
-    severity_counts = {
-        severity: sum(1 for check in checks if check.get("severity") == severity)
-        for severity in ("error", "warning", "info")
-    }
-    overall = "none"
-    for severity in ("error", "warning", "info"):
-        if severity_counts[severity]:
-            overall = severity
-            break
-    failing = 0
-    if threshold != "none":
-        threshold_rank = SEVERITY_RANK[threshold]
-        failing = sum(
-            1
-            for check in checks
-            if SEVERITY_RANK.get(str(check.get("severity")), 0) >= threshold_rank
-        )
-    return {
-        "overall_severity": overall,
-        "issue_count": int(sum(severity_counts.values())),
-        "severity_counts": severity_counts,
-        "fail_on_severity": threshold,
-        "gate_triggered": bool(failing),
-        "gate_status": "fail" if failing else "pass",
-        "failing_issue_count": int(failing),
-    }
+    return shared_quality_verdict(checks, fail_on_severity=fail_on_severity)
 
 
 def _sample(frame: pd.DataFrame, limit: int) -> list[dict[str, Any]]:
-    if frame.empty:
-        return []
-    return frame.head(limit).where(pd.notna(frame.head(limit)), None).to_dict("records")
+    return sample_frame(frame, limit)
 
 
 def _append_check(
@@ -194,18 +172,16 @@ def _append_check(
     sample_limit: int = 20,
     **extra: Any,
 ) -> None:
-    if affected <= 0:
-        return
-    row = {
-        "check": check,
-        "severity": severity,
-        "message": message,
-        "affected_items": int(affected),
+    append_quality_check(
+        checks,
+        check=check,
+        severity=severity,
+        message=message,
+        affected=affected,
+        samples=samples,
+        sample_limit=sample_limit,
         **extra,
-    }
-    if samples is not None:
-        row["sample_rows"] = _sample(samples, sample_limit)
-    checks.append(row)
+    )
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
@@ -244,14 +220,56 @@ def normalize_tick_for_reconciliation(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _final_cumulative(group: pd.DataFrame, column: str) -> tuple[float | None, bool]:
+    source = _final_cumulative_source(group, column)
+    return source["value"], bool(source["used_fallback"])
+
+
+def _timestamp_iso(value: object) -> str | None:
+    if isinstance(value, pd.Series):
+        value = value.iloc[0] if not value.empty else None
+    if value is None or pd.isna(value):
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _final_cumulative_source(group: pd.DataFrame, column: str) -> dict[str, Any]:
     values = pd.to_numeric(group[column], errors="coerce") if column in group.columns else None
     if values is None or values.dropna().empty:
-        return None, False
+        return {
+            "value": None,
+            "used_fallback": False,
+            "source": "missing",
+            "timestamp": None,
+        }
     last_raw = values.iloc[-1]
     if pd.notna(last_raw):
-        return float(last_raw), False
+        timestamp = group["_timestamp"].iloc[-1] if "_timestamp" in group.columns else None
+        return {
+            "value": float(last_raw),
+            "used_fallback": False,
+            "source": "final",
+            "timestamp": _timestamp_iso(timestamp),
+        }
     fallback = values.max(skipna=True)
-    return (float(fallback), True) if pd.notna(fallback) else (None, False)
+    if pd.isna(fallback):
+        return {
+            "value": None,
+            "used_fallback": False,
+            "source": "missing",
+            "timestamp": None,
+        }
+    max_index = values.idxmax()
+    timestamp = group.loc[max_index, "_timestamp"] if "_timestamp" in group.columns else None
+    if isinstance(timestamp, pd.Series):
+        timestamp = timestamp.iloc[0]
+    return {
+        "value": float(fallback),
+        "used_fallback": True,
+        "source": "max_fallback",
+        "timestamp": _timestamp_iso(timestamp),
+    }
 
 
 def aggregate_tick_ohlcv(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -259,8 +277,12 @@ def aggregate_tick_ohlcv(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
     metadata: dict[str, Any] = {
         "source_rows": int(len(df)),
         "timestamp_parse_failure_count": 0,
+        "close_missing_count": 0,
         "volume_fallback_count": 0,
         "turnover_fallback_count": 0,
+        "close_source_counts": {},
+        "volume_source_counts": {},
+        "turnover_source_counts": {},
     }
     if work.empty:
         return pd.DataFrame(), metadata
@@ -284,10 +306,28 @@ def aggregate_tick_ohlcv(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
             high_source = valid_last
         if low_source.empty:
             low_source = valid_last
-        volume, volume_fallback = _final_cumulative(ordered, "volume")
-        turnover, turnover_fallback = _final_cumulative(ordered, "total_turnover")
+        close_source = "last_valid_tick" if not valid_last.empty else "missing"
+        close_timestamp = None
+        if not valid_last.empty and "_timestamp" in ordered.columns:
+            close_timestamp = _timestamp_iso(ordered.loc[valid_last.index[-1], "_timestamp"])
+        volume_source = _final_cumulative_source(ordered, "volume")
+        turnover_source = _final_cumulative_source(ordered, "total_turnover")
+        volume = volume_source["value"]
+        turnover = turnover_source["value"]
+        volume_fallback = bool(volume_source["used_fallback"])
+        turnover_fallback = bool(turnover_source["used_fallback"])
+        metadata["close_missing_count"] += int(close_source == "missing")
         metadata["volume_fallback_count"] += int(volume_fallback)
         metadata["turnover_fallback_count"] += int(turnover_fallback)
+        metadata["close_source_counts"][close_source] = (
+            int(metadata["close_source_counts"].get(close_source, 0)) + 1
+        )
+        metadata["volume_source_counts"][str(volume_source["source"])] = (
+            int(metadata["volume_source_counts"].get(str(volume_source["source"]), 0)) + 1
+        )
+        metadata["turnover_source_counts"][str(turnover_source["source"])] = (
+            int(metadata["turnover_source_counts"].get(str(turnover_source["source"]), 0)) + 1
+        )
         row = {
             "symbol_key": symbol_key,
             "order_book_id": canonical_tick_symbol(symbol_key),
@@ -301,8 +341,14 @@ def aggregate_tick_ohlcv(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
             "tick_first_timestamp": ordered["_timestamp"].min(),
             "tick_last_timestamp": ordered["_timestamp"].max(),
             "tick_row_count": int(len(ordered)),
+            "tick_close_source": close_source,
+            "tick_close_timestamp": close_timestamp,
             "volume_used_fallback": bool(volume_fallback),
+            "volume_source": volume_source["source"],
+            "volume_source_timestamp": volume_source["timestamp"],
             "turnover_used_fallback": bool(turnover_fallback),
+            "turnover_source": turnover_source["source"],
+            "turnover_source_timestamp": turnover_source["timestamp"],
         }
         rows.append(row)
     return pd.DataFrame(rows), metadata
@@ -410,33 +456,7 @@ def _ohlc_invalid(frame: pd.DataFrame, prefix: str = "") -> pd.Series:
 
 
 def _quote_ladder_invalid(work: pd.DataFrame) -> pd.Series:
-    invalid = pd.Series(False, index=work.index)
-    if {"a1", "b1"}.issubset(work.columns):
-        a1 = _numeric(work, "a1")
-        b1 = _numeric(work, "b1")
-        positive = (a1 > 0) & (b1 > 0)
-        invalid |= positive & (a1 < b1)
-    for level in range(1, 10):
-        ask_left, ask_right = f"a{level}", f"a{level + 1}"
-        bid_left, bid_right = f"b{level}", f"b{level + 1}"
-        if {ask_left, ask_right}.issubset(work.columns):
-            left = _numeric(work, ask_left)
-            right = _numeric(work, ask_right)
-            valid = (left > 0) & (right > 0)
-            invalid |= valid & (left > right)
-        if {bid_left, bid_right}.issubset(work.columns):
-            left = _numeric(work, bid_left)
-            right = _numeric(work, bid_right)
-            valid = (left > 0) & (right > 0)
-            invalid |= valid & (left < right)
-    volume_columns = [
-        column
-        for column in work.columns
-        if (column.startswith("a") or column.startswith("b")) and column.endswith("_v")
-    ]
-    for column in volume_columns:
-        invalid |= _numeric(work, column) < 0
-    return invalid
+    return quote_ladder_invalid(work)
 
 
 def inspect_tick_daily_reconciliation(
@@ -467,6 +487,7 @@ def inspect_tick_daily_reconciliation(
 
     normalized_raw = normalize_tick_for_reconciliation(raw)
     if not normalized_raw.empty:
+        aggregate_meta["session_phase_counts"] = session_phase_counts(normalized_raw["_timestamp"])
         parse_failures = int(normalized_raw["_timestamp"].isna().sum())
         _append_check(
             checks,

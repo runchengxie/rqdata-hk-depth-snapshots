@@ -1,9 +1,14 @@
-# 港股 Tick 深度下载规模估算
+# 港股 Tick 深度下载规模估算快照：2026-05-06
 
-本页解决什么：记录 RQData 港股十档 tick 数据下载前的权限、quota、磁盘和分批策略判断。
-本页不解决什么：不承诺全市场真实最终成本；tick 数据高度依赖标的活跃度、日期和账号权限。
-适合谁：准备决定是否下载核心池、港股通池或全市场 tick 深度历史的人。
+状态：现场估算快照。
+
 记录日期：2026-05-06。
+
+适用范围：当前 RQData 账号、当前 quota、当前样本。
+
+用途：记录港股十档 tick 数据下载前的权限、quota、磁盘和分批策略判断。
+
+边界：真实成本受标的活跃度、日期和账号权限影响；账号权限、quota 或 provider 行为变化后需要重新估算。
 
 ## 当前结论
 
@@ -104,9 +109,9 @@ quota_per_symbol_period ~= 92.9 MB
 disk_per_symbol_period ~= 134.5 MB
 ```
 
-这是下载前规划用的粗估，不是账单承诺。真实执行应以每个 chunk 的 `metadata.json` 里的 `quota_before` / `quota_after` 为准，并持续更新估算。
+这些数字只用于下载前规划。真实执行应以每个 chunk 的 `metadata.json` 里的 `quota_before` / `quota_after` 为准，并持续更新估算。
 
-当前下载器还会写 chunk/unit 级 audit csv。以后扩样本时，优先用 audit 表中的 `quota_delta_bytes`、`status`、`rows` 和 `attempts` 更新估算，而不是只看单个 metadata 汇总。
+当前下载器还会写 chunk/unit 级 audit csv。以后扩样本时，优先用 audit 表中的 `quota_delta_bytes`、`status`、`rows` 和 `attempts` 更新估算；单个 metadata 汇总只作辅助。
 
 ## 推荐下载策略
 

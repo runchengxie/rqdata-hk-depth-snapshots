@@ -37,10 +37,14 @@ packages = ["src/rqdata_tick_data"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "rqdata_live: optional live RQData smoke tests that require credentials and opt-in",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = ["project_tools"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

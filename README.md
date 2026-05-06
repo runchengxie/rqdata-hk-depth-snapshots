@@ -1,22 +1,29 @@
 # RQData 港股十档 Tick 数据下载工具
 
-本项目是一个独立的工具集，专门用于探查、下载、校验和聚合带有十档买卖深度的 RQData 港股历史 Tick 快照数据。
-
-**注意**：本项目将 RQData 的港股 Tick 数据视为**历史 Tick 深度快照**，而非完整的逐笔订单 L2（Level 2）行情数据流。因此，本工具**不会**重建订单簿、处理订单事件、模拟排队位置，也不提供实盘交易执行工具。
+本项目用于探查、下载、校验、对账和聚合 RQData 港股历史 Tick 深度快照数据。项目边界很明确：它处理历史快照数据，不重建订单簿，不处理逐笔订单事件，不模拟排队位置，也不提供实盘交易执行功能。
 
 ## 安装
+
+离线开发和测试：
 
 ```bash
 uv sync --group dev
 ```
 
-如果需要调用线上数据源，请安装包含 RQData 的可选依赖：
+运行测试和 lint：
+
+```bash
+uv run pytest
+uv run ruff check .
+```
+
+调用真实 RQData provider 时安装可选依赖：
 
 ```bash
 uv sync --extra rqdata --group dev
 ```
 
-API 认证信息可以通过本地的 `rqdatac` 配置获取，也可以通过环境变量配置（具体请参考 `.env.example` 文件）。
+测试和离线 CLI smoke 使用 `FakeProvider`，不需要 RQData 账号。真实 provider 使用本地 `rqdatac` 配置或环境变量认证。
 
 线上下载前先查看 quota：
 
@@ -24,19 +31,9 @@ API 认证信息可以通过本地的 `rqdatac` 配置获取，也可以通过�
 rqdata-tick quota --pretty
 ```
 
-下载规模、quota 和分批策略的现场估算记录见
-[`docs/playbooks/hk-tick-download-sizing.md`](docs/playbooks/hk-tick-download-sizing.md)。
+## 常用流程
 
-## “探查先行”工作流
-
-在进行大规模下载前，建议先从小数据量试水，以评估你的账号数据权限、可用字段、数据行数以及磁盘占用情况，再逐步扩大规模：
-
-1. 单只标的，单日数据。
-2. 多只标的，单日数据。
-3. 多只标的，单月数据。
-4. 在数据健康检查通过且聚合逻辑稳定后，再扩展至更大规模的数据集。
-
-探查（Probe）示例：
+单标的单日 probe：
 
 ```bash
 rqdata-tick probe \
@@ -45,39 +42,19 @@ rqdata-tick probe \
   --out artifacts/cache/rqdata/hk_tick_depth/probe_00001_20250303
 ```
 
-模拟下载预演（Dry-run）示例：
+离线下载演示：
 
 ```bash
 rqdata-tick download \
   --symbols 00001.XHKG,00700.XHKG \
   --start-date 20250303 \
-  --end-date 20250307 \
-  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --batch-size 2 \
-  --dry-run
+  --end-date 20250303 \
+  --out artifacts/cache/rqdata/hk_tick_depth/demo \
+  --fields "last volume total_turnover a1 a1_v b1 b1_v" \
+  --fake-provider
 ```
 
-断点续传下载示例：
-
-```bash
-rqdata-tick download \
-  --symbols-file symbols.txt \
-  --start-date 20250303 \
-  --end-date 20250307 \
-  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --batch-size 5 \
-  --resume
-```
-
-下载命令会为每次 run 生成 chunk/unit 级审计表，默认写入：
-
-```text
-<output>/audit/download_<timestamp>_<run>.csv
-```
-
-审计表按 `trade_date + order_book_id` 记录 `written`、`skipped_existing`、`empty_remote`、`failed`、`quota_blocked` 等状态，并记录可用时的 `quota_before`、`quota_after` 和 `quota_delta`。`download_*.json` metadata 会引用 audit 路径并汇总各状态数量。
-
-线上大规模下载建议打开默认 quota guard，并为 retry/backoff 留出配置：
+线上分批下载：
 
 ```bash
 rqdata-tick download \
@@ -93,72 +70,59 @@ rqdata-tick download \
   --resume
 ```
 
-当最近 chunk 的实测 quota delta 推断下一个 chunk 可能接近当日阈值时，系统会跳过 provider 请求并把对应 unit 标记为 `quota_blocked`，方便下一天直接续跑。
+`--symbols` 和 `--symbols-file` 会把 `700`、`00700.HK`、`00700.XHKG` 统一成 RQData 的 `00700.XHKG`。符号文件支持 TXT、CSV 和 Parquet。
 
-`--symbols` 和 `--symbols-file` 会把 `700`、`00700.HK`、`00700.XHKG` 统一规范成 RQData 的 `00700.XHKG`。符号文件支持 TXT、CSV 和 Parquet；表格文件会优先读取 `order_book_id`、`symbol`、`stock_ticker` 或 `ts_code` 列，方便复用 cross 项目的 universe/symbol 产物。
+## 输出布局
 
-真实 provider 下载时，默认使用 RQData 港股交易日历，只对交易日发请求，避免周末和休市日空请求消耗 quota。离线预演如果不想初始化 provider，可以显式使用自然日：
-
-```bash
-rqdata-tick download \
-  --symbols 00001.XHKG \
-  --start-date 20250301 \
-  --end-date 20250303 \
-  --out artifacts/cache/rqdata/hk_tick_depth/weekend_probe \
-  --dry-run \
-  --calendar calendar
-```
-
-Tick 深度数据默认按 `adjust_type=none` 拉取，保留盘口原始报价口径；如确实需要复权口径，可以显式传入 `--adjust-type pre` 等 RQData 支持的取值。
-
-全新的原始数据下载默认采用按“标的-日期”划分的目录结构：
+默认 raw layout 是 `symbol-date`：
 
 ```text
 parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 ```
 
-在跳过本地已有数据之前，断点续传（Resume）机制会严格校验 Parquet 文件的可读性、请求的字段、标的代码以及交易日期。这保证了增量重跑的绝对安全——无论是追加新标的，还是修复损坏的数据分片，都不会去重复下载那些已经校验合格的“标的-日期”单元。
+断点续传会在跳过本地文件前校验 parquet 可读性、字段、标的和交易日期。历史 batch layout 仍可读取：
 
-为了保持向后兼容，旧版的批处理目录结构依然可用：
-
-```bash
-rqdata-tick download \
-  --symbols-file symbols.txt \
-  --start-date 20250303 \
-  --end-date 20250307 \
-  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --raw-layout batch
+```text
+parts/trade_date=YYYYMMDD/batch_0000.parquet
 ```
 
-Parquet 文件的输出使用了明确的写入配置。默认采用 `pyarrow + snappy` 压缩，这是适用于下载和投研阶段的优秀默认组合。如果你打算使用 `zstd` 压缩，建议先提取具有代表性的 Tick 样本，对文件大小、读写时间进行基准测试后，再做决定：
+新下载建议使用 `symbol-date`。`--raw-layout batch` / `raw_layout=batch` 已标记为 deprecated，metadata 会记录替代布局。
 
-```bash
-rqdata-tick download \
-  --symbols 00001.XHKG,00700.XHKG \
-  --start-date 20250303 \
-  --end-date 20250307 \
-  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --compression zstd \
-  --compression-level 3
+每次下载会生成 metadata 和 audit：
+
+```text
+<output>/meta/download_<timestamp>.json
+<output>/audit/download_<timestamp>_<run>.csv
 ```
 
-数据健康检查示例：
+audit 按 `trade_date + order_book_id` 记录 `written`、`skipped_existing`、`empty_remote`、`failed`、`quota_blocked` 等状态。
+
+## 数据质量
+
+raw tick health：
 
 ```bash
 rqdata-tick health \
-  --input artifacts/cache/rqdata/hk_tick_depth/hk_probe
+  --input artifacts/cache/rqdata/hk_tick_depth/demo \
+  --fail-on-severity warning \
+  --out-units artifacts/reports/tick_health_units.csv
 ```
 
-如果希望把重复 tick、盘口交叉、累计成交量回落等 warning 也作为门禁失败：
+`health` 会输出数据集级 summary，并可写出 symbol-date 级诊断。检查范围包括 timestamp、重复 key、同 timestamp 冲突、盘口阶梯、负深度量、累计成交量/成交额回落、session phase 等。
+
+日频聚合：
 
 ```bash
-rqdata-tick health \
-  --input artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --fail-on-severity warning
+rqdata-tick aggregate-daily \
+  --input artifacts/cache/rqdata/hk_tick_depth/demo \
+  --output artifacts/cache/rqdata/hk_tick_depth_daily/demo/data.parquet
 ```
 
-Tick 与日频资产对账分两种口径。正式下载质量门禁建议使用 raw daily reference，
-也就是和 tick 默认 `adjust_type=none` 同一报价口径的日频数据：
+聚合结果包含价差、深度、订单不平衡、VWAP 和质量标记，例如 `quote_quality_flag`、`vwap_quality_flag`、`is_usable_for_research`。
+
+## Tick 与日频对账
+
+下载质量门禁建议使用同报价口径的 raw daily reference：
 
 ```bash
 rqdata-tick reconcile-daily \
@@ -169,7 +133,7 @@ rqdata-tick reconcile-daily \
   --fail-on-severity warning
 ```
 
-如果只是和 cross daily clean 研究底座做覆盖检查，使用 `cross-clean` policy：
+与 cross daily clean 研究底座做覆盖检查时使用 `cross-clean`：
 
 ```bash
 rqdata-tick reconcile-daily \
@@ -180,38 +144,35 @@ rqdata-tick reconcile-daily \
   --fail-on-severity warning
 ```
 
-`cross-clean` 会继续记录 `tick_close_mismatch`、`tick_volume_mismatch` 和
-`tick_turnover_mismatch`，但将这些数值口径差异标为 `info`，避免 adjusted/clean
-口径阻断 raw tick 下载门禁。`daily_active_missing_tick` 等覆盖问题仍是 warning，
-可在 `--fail-on-severity warning` 下触发门禁。`reconcile-daily` 只读 raw tick 和外部
-daily reference asset，不会复制或修改 cross 日频资产，也不会覆盖 raw tick。
+`cross-clean` 会把价格、成交量、成交额的口径差异记录为 `info`。覆盖缺口仍按 warning 进入门禁。
 
-日度数据聚合示例：
-
-```bash
-rqdata-tick aggregate-daily \
-  --input artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --output artifacts/cache/rqdata/hk_tick_depth_daily/hk_probe/data.parquet
-```
-
-数据资产导出 (Asset Emission) 示例：
+## Asset 输出
 
 ```bash
 rqdata-tick emit-asset \
   --kind raw \
-  --source artifacts/cache/rqdata/hk_tick_depth/hk_probe \
-  --output artifacts/assets/rqdata/hk/tick_depth/hk_probe
+  --source artifacts/cache/rqdata/hk_tick_depth/demo \
+  --output artifacts/assets/rqdata/hk/tick_depth/demo
 
 rqdata-tick emit-asset \
   --kind daily \
-  --source artifacts/cache/rqdata/hk_tick_depth_daily/hk_probe/data.parquet \
-  --output artifacts/assets/rqdata/hk/tick_depth_daily/hk_probe
+  --source artifacts/cache/rqdata/hk_tick_depth_daily/demo/data.parquet \
+  --output artifacts/assets/rqdata/hk/tick_depth_daily/demo
 ```
 
-raw 和 daily asset 输出都会包含 `manifest.yml`、`meta.json`、`symbols.txt` 和 `fields.txt`，便于后续脚本稳定引用。
+asset 目录包含 `manifest.yml`、`meta.json`、`symbols.txt` 和 `fields.txt`。
 
-## 下游应用建议
+## 文档
 
-原始的 Tick Parquet 数据分片主要作为数据核查与校准的基础资产。对于低频量化研究流水线，建议直接使用日度聚合后的输出结果（例如买卖价差 Spread、深度 Depth、订单不平衡量 Imbalance 以及 VWAP 特征等），而不是直接去处理海量的原始快照。
+详细说明见 [docs/README.md](docs/README.md)：
 
-**核心提示**：在预测模型中引入任何同日的日度聚合数据时，必须进行滞后处理（Lag）或引入严格的时间点（Point-in-Time）控制，以杜绝未来函数。最安全、最基础的首选应用场景，是将其用于**交易成本测算**和**流动性过滤**。
+- [CLI reference](docs/cli.md)
+- [Data layout](docs/data-layout.md)
+- [Quality checks](docs/quality-checks.md)
+- [Reconciliation](docs/reconciliation.md)
+- [Providers](docs/providers.md)
+- [Testing](docs/testing.md)
+- [Terminology](docs/terminology.md)
+- [下载规模估算快照](docs/playbooks/hk-tick-download-sizing.md)
+
+低频量化研究建议使用日度聚合结果，并对同日聚合特征做 lag 或严格 point-in-time 控制。raw tick parquet 主要作为审计、校准和重新聚合的基础资产。

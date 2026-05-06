@@ -18,7 +18,3 @@ class ProviderRequestError(RQDataTickError):
 
 class DownloadError(RQDataTickError):
     """Download failed."""
-
-
-class SchemaError(RQDataTickError):
-    """Dataframe schema cannot be normalized or validated."""

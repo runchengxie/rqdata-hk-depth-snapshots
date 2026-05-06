@@ -484,6 +484,22 @@ def test_batched_provider_response_writes_symbol_date_parts(tmp_path) -> None:
     assert not batch_part_path(root, "20250303", 0).exists()
 
 
+def test_legacy_batch_download_records_deprecation(tmp_path) -> None:
+    result = download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        raw_layout="batch",
+    )
+
+    assert result["deprecations"][0]["feature"] == "raw_layout=batch"
+    assert result["deprecations"][0]["replacement"] == "raw_layout=symbol-date"
+
+
 def test_parquet_compression_recorded_in_metadata_and_coverage(tmp_path) -> None:
     root = tmp_path / "cache"
     fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
