@@ -10,7 +10,7 @@ import pandas as pd
 from rqdata_tick_data.quality import quote_ladder_flags
 from rqdata_tick_data.storage import (
     atomic_write_parquet,
-    load_parquet_parts,
+    discover_parquet_parts,
     metadata_path,
     write_json,
 )
@@ -244,7 +244,9 @@ def aggregate_group(group: pd.DataFrame) -> dict[str, Any]:
     return row
 
 
-def unavailable_metrics(df: pd.DataFrame) -> dict[str, list[str]]:
+def unavailable_metrics_for_columns(
+    columns: set[str] | list[str] | pd.Index,
+) -> dict[str, list[str]]:
     requirements = {
         "spread_bps_p50": ["a1", "b1"],
         "spread_bps_p90": ["a1", "b1"],
@@ -272,12 +274,17 @@ def unavailable_metrics(df: pd.DataFrame) -> dict[str, list[str]]:
         "full_day_tick_vwap": ["volume", "total_turnover"],
         "open_to_tick_vwap_bps": ["datetime", "volume", "total_turnover"],
     }
+    available = set(columns)
     missing: dict[str, list[str]] = {}
     for metric, columns in requirements.items():
-        absent = [column for column in columns if column not in df.columns]
+        absent = [column for column in columns if column not in available]
         if absent:
             missing[metric] = absent
     return missing
+
+
+def unavailable_metrics(df: pd.DataFrame) -> dict[str, list[str]]:
+    return unavailable_metrics_for_columns(df.columns)
 
 
 def aggregate_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -299,22 +306,87 @@ def aggregate_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out[["order_book_id", "trading_date", *DAILY_METRIC_COLUMNS]]
 
 
+def aggregate_daily_parts(input_root: str | Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    parts = discover_parquet_parts(input_root)
+    if not parts:
+        aggregate = aggregate_daily_frame(pd.DataFrame())
+        return aggregate, {
+            "source_rows": 0,
+            "source_parts": 0,
+            "source_fields": [],
+            "missing_source_fields": unavailable_metrics_for_columns(set()),
+        }
+
+    rows: list[pd.DataFrame] = []
+    source_rows = 0
+    source_columns: list[str] = []
+    seen_columns: set[str] = set()
+    seen_units: set[tuple[str, str]] = set()
+    duplicate_units: set[tuple[str, str]] = set()
+
+    for part in parts:
+        frame = pd.read_parquet(part)
+        source_rows += int(len(frame))
+        for column in frame.columns:
+            column_name = str(column)
+            if column_name not in seen_columns:
+                seen_columns.add(column_name)
+                source_columns.append(column_name)
+        if frame.empty:
+            continue
+        aggregate = aggregate_daily_frame(frame)
+        if aggregate.empty:
+            continue
+        part_units = {
+            (str(row.order_book_id), str(row.trading_date))
+            for row in aggregate.loc[:, ["order_book_id", "trading_date"]].itertuples(
+                index=False
+            )
+        }
+        duplicate_units.update(seen_units & part_units)
+        seen_units.update(part_units)
+        rows.append(aggregate)
+
+    if duplicate_units:
+        sample = ", ".join(f"{symbol}/{date}" for symbol, date in sorted(duplicate_units)[:5])
+        raise ValueError(
+            "Cannot stream aggregate duplicate symbol-date units split across parquet parts: "
+            f"{sample}."
+        )
+
+    if rows:
+        output = pd.concat(rows, ignore_index=True).sort_values(
+            ["order_book_id", "trading_date"],
+            ignore_index=True,
+        )
+    else:
+        output = aggregate_daily_frame(pd.DataFrame())
+
+    return output, {
+        "source_rows": source_rows,
+        "source_parts": len(parts),
+        "source_fields": source_columns,
+        "missing_source_fields": unavailable_metrics_for_columns(seen_columns),
+    }
+
+
 def write_daily_aggregate(
     input_root: str | Path,
     output_path: str | Path,
     meta_output: str | Path | None = None,
     schema_version: str = "tick_depth_daily.v1",
 ) -> dict[str, Any]:
-    df = load_parquet_parts(input_root)
-    aggregate = aggregate_daily_frame(df)
+    aggregate, stream_meta = aggregate_daily_parts(input_root)
     output = atomic_write_parquet(aggregate, output_path)
-    unavailable = unavailable_metrics(df)
+    unavailable = stream_meta["missing_source_fields"]
     metadata = {
         "kind": "aggregate_daily",
         "schema_version": schema_version,
         "source_path": str(input_root),
         "output_path": str(output),
-        "source_rows": int(len(df)),
+        "source_rows": int(stream_meta["source_rows"]),
+        "source_parts": int(stream_meta["source_parts"]),
+        "source_fields": list(stream_meta["source_fields"]),
         "rows": int(len(aggregate)),
         "unavailable_metrics": sorted(unavailable),
         "missing_source_fields": unavailable,

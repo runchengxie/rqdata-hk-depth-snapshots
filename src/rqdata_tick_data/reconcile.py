@@ -22,7 +22,7 @@ from rqdata_tick_data.quality import (
 from rqdata_tick_data.quality import (
     quality_verdict as shared_quality_verdict,
 )
-from rqdata_tick_data.storage import discover_parquet_parts, load_parquet_parts, write_json
+from rqdata_tick_data.storage import discover_parquet_parts, write_json
 from rqdata_tick_data.symbols import normalize_hk_order_book_id
 
 REFERENCE_POLICIES = ("raw-daily", "cross-clean")
@@ -354,6 +354,75 @@ def aggregate_tick_ohlcv(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
     return pd.DataFrame(rows), metadata
 
 
+def _empty_tick_aggregate_metadata() -> dict[str, Any]:
+    return {
+        "source_rows": 0,
+        "source_parts": 0,
+        "timestamp_parse_failure_count": 0,
+        "close_missing_count": 0,
+        "volume_fallback_count": 0,
+        "turnover_fallback_count": 0,
+        "close_source_counts": {},
+        "volume_source_counts": {},
+        "turnover_source_counts": {},
+    }
+
+
+def _merge_count_map(target: dict[str, Any], source: dict[str, Any], key: str) -> None:
+    target_counts = target.setdefault(key, {})
+    for name, count in (source.get(key) or {}).items():
+        target_counts[str(name)] = int(target_counts.get(str(name), 0)) + int(count)
+
+
+def aggregate_tick_ohlcv_parts(tick_input: str | Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    parts = discover_parquet_parts(tick_input)
+    metadata = _empty_tick_aggregate_metadata()
+    metadata["source_parts"] = len(parts)
+    rows: list[pd.DataFrame] = []
+    seen_units: set[tuple[str, str]] = set()
+    duplicate_units: set[tuple[str, str]] = set()
+
+    for part in parts:
+        frame = pd.read_parquet(part)
+        aggregate, part_meta = aggregate_tick_ohlcv(frame)
+        metadata["source_rows"] += int(part_meta["source_rows"])
+        metadata["timestamp_parse_failure_count"] += int(
+            part_meta["timestamp_parse_failure_count"]
+        )
+        metadata["close_missing_count"] += int(part_meta["close_missing_count"])
+        metadata["volume_fallback_count"] += int(part_meta["volume_fallback_count"])
+        metadata["turnover_fallback_count"] += int(part_meta["turnover_fallback_count"])
+        _merge_count_map(metadata, part_meta, "close_source_counts")
+        _merge_count_map(metadata, part_meta, "volume_source_counts")
+        _merge_count_map(metadata, part_meta, "turnover_source_counts")
+        if aggregate.empty:
+            continue
+        part_units = {
+            (str(row.symbol_key), str(row.trading_date))
+            for row in aggregate.loc[:, ["symbol_key", "trading_date"]].itertuples(
+                index=False
+            )
+        }
+        duplicate_units.update(seen_units & part_units)
+        seen_units.update(part_units)
+        rows.append(aggregate)
+
+    if duplicate_units:
+        sample = ", ".join(f"{symbol}/{date}" for symbol, date in sorted(duplicate_units)[:5])
+        raise ValueError(
+            "Cannot stream reconcile duplicate symbol-date units split across parquet parts: "
+            f"{sample}."
+        )
+
+    if not rows:
+        return pd.DataFrame(), metadata
+    output = pd.concat(rows, ignore_index=True).sort_values(
+        ["symbol_key", "trading_date"],
+        ignore_index=True,
+    )
+    return output, metadata
+
+
 def _normalize_daily_reference(frame: pd.DataFrame, *, source_symbol: str | None) -> pd.DataFrame:
     work = frame.copy()
     if work.empty:
@@ -459,6 +528,95 @@ def _quote_ladder_invalid(work: pd.DataFrame) -> pd.Series:
     return quote_ladder_invalid(work)
 
 
+def _extend_sample_records(
+    records: list[dict[str, Any]],
+    frame: pd.DataFrame,
+    columns: list[str],
+    *,
+    limit: int,
+) -> None:
+    remaining = limit - len(records)
+    if remaining <= 0 or frame.empty:
+        return
+    records.extend(_sample(frame.loc[:, columns], remaining))
+
+
+def _inspect_raw_reconciliation_inputs(
+    tick_input: str | Path,
+    *,
+    config: ReconcileConfig,
+    session_start: time,
+    session_end: time,
+) -> dict[str, Any]:
+    phase_counts = {phase: 0 for phase in session_phase_counts(pd.Series(dtype="datetime64[ns]"))}
+    parse_failure_samples: list[dict[str, Any]] = []
+    session_outlier_samples: list[dict[str, Any]] = []
+    quote_invalid_samples: list[dict[str, Any]] = []
+    parse_failures = 0
+    session_outliers = 0
+    quote_invalid_count = 0
+
+    for part in discover_parquet_parts(tick_input):
+        frame = pd.read_parquet(part)
+        normalized = normalize_tick_for_reconciliation(frame)
+        if normalized.empty:
+            continue
+        part_phase_counts = session_phase_counts(normalized["_timestamp"])
+        for phase, count in part_phase_counts.items():
+            phase_counts[phase] = int(phase_counts.get(phase, 0)) + int(count)
+
+        parse_mask = normalized["_timestamp"].isna()
+        parse_failures += int(parse_mask.sum())
+        parse_columns = [column for column in ("order_book_id", "datetime") if column in normalized]
+        _extend_sample_records(
+            parse_failure_samples,
+            normalized.loc[parse_mask],
+            parse_columns,
+            limit=config.sample_limit,
+        )
+
+        times = normalized["_timestamp"].dt.time
+        outlier_mask = normalized["_timestamp"].notna() & (
+            (times < session_start) | (times > session_end)
+        )
+        session_outliers += int(outlier_mask.sum())
+        session_columns = [
+            column
+            for column in ("order_book_id", "trading_date", "datetime")
+            if column in normalized
+        ]
+        _extend_sample_records(
+            session_outlier_samples,
+            normalized.loc[outlier_mask],
+            session_columns,
+            limit=config.sample_limit,
+        )
+
+        quote_invalid = _quote_ladder_invalid(normalized)
+        quote_invalid_count += int(quote_invalid.sum())
+        quote_columns = [
+            column
+            for column in ("order_book_id", "trading_date", "datetime", "a1", "b1", "a2", "b2")
+            if column in normalized.columns
+        ]
+        _extend_sample_records(
+            quote_invalid_samples,
+            normalized.loc[quote_invalid],
+            quote_columns,
+            limit=config.sample_limit,
+        )
+
+    return {
+        "session_phase_counts": phase_counts,
+        "timestamp_parse_failures": parse_failures,
+        "timestamp_parse_failure_samples": parse_failure_samples,
+        "session_time_outliers": session_outliers,
+        "session_time_outlier_samples": session_outlier_samples,
+        "quote_ladder_invalid": quote_invalid_count,
+        "quote_ladder_invalid_samples": quote_invalid_samples,
+    }
+
+
 def inspect_tick_daily_reconciliation(
     tick_input: str | Path,
     daily_asset_dir: str | Path,
@@ -469,13 +627,12 @@ def inspect_tick_daily_reconciliation(
     reference_policy = _normalize_reference_policy(cfg.reference_policy)
     session_start = _session_time(cfg.session_start)
     session_end = _session_time(cfg.session_end)
-    raw = load_parquet_parts(tick_input)
-    tick_daily, aggregate_meta = aggregate_tick_ohlcv(raw)
+    tick_daily, aggregate_meta = aggregate_tick_ohlcv_parts(tick_input)
     symbol_keys = set(tick_daily.get("symbol_key", pd.Series(dtype="object")).dropna().astype(str))
     daily, reference_meta = load_daily_reference(daily_asset_dir, symbol_keys=symbol_keys)
     checks: list[dict[str, Any]] = []
 
-    if raw.empty:
+    if int(aggregate_meta["source_rows"]) == 0:
         _append_check(
             checks,
             check="empty_tick_dataset",
@@ -485,51 +642,39 @@ def inspect_tick_daily_reconciliation(
             sample_limit=cfg.sample_limit,
         )
 
-    normalized_raw = normalize_tick_for_reconciliation(raw)
-    if not normalized_raw.empty:
-        aggregate_meta["session_phase_counts"] = session_phase_counts(normalized_raw["_timestamp"])
-        parse_failures = int(normalized_raw["_timestamp"].isna().sum())
+    if int(aggregate_meta["source_rows"]) > 0:
+        raw_checks = _inspect_raw_reconciliation_inputs(
+            tick_input,
+            config=cfg,
+            session_start=session_start,
+            session_end=session_end,
+        )
+        aggregate_meta["session_phase_counts"] = raw_checks["session_phase_counts"]
         _append_check(
             checks,
             check="timestamp_parse_failures",
             severity="warning",
             message="Some tick timestamps could not be parsed.",
-            affected=parse_failures,
-            samples=normalized_raw.loc[
-                normalized_raw["_timestamp"].isna(),
-                ["order_book_id", "datetime"],
-            ],
+            affected=int(raw_checks["timestamp_parse_failures"]),
+            samples=pd.DataFrame(raw_checks["timestamp_parse_failure_samples"]),
             sample_limit=cfg.sample_limit,
-        )
-        times = normalized_raw["_timestamp"].dt.time
-        outlier_mask = normalized_raw["_timestamp"].notna() & (
-            (times < session_start) | (times > session_end)
         )
         _append_check(
             checks,
             check="session_time_outlier",
             severity="warning",
             message="Tick timestamps fall outside the accepted HK tick session window.",
-            affected=int(outlier_mask.sum()),
-            samples=normalized_raw.loc[
-                outlier_mask,
-                ["order_book_id", "trading_date", "datetime"],
-            ],
+            affected=int(raw_checks["session_time_outliers"]),
+            samples=pd.DataFrame(raw_checks["session_time_outlier_samples"]),
             sample_limit=cfg.sample_limit,
         )
-        quote_invalid = _quote_ladder_invalid(normalized_raw)
-        quote_sample_cols = [
-            column
-            for column in ("order_book_id", "trading_date", "datetime", "a1", "b1", "a2", "b2")
-            if column in normalized_raw.columns
-        ]
         _append_check(
             checks,
             check="quote_ladder_invalid",
             severity="warning",
             message="Quote depth ladder or quote volume rules were violated.",
-            affected=int(quote_invalid.sum()),
-            samples=normalized_raw.loc[quote_invalid, quote_sample_cols],
+            affected=int(raw_checks["quote_ladder_invalid"]),
+            samples=pd.DataFrame(raw_checks["quote_ladder_invalid_samples"]),
             sample_limit=cfg.sample_limit,
         )
 
@@ -705,7 +850,7 @@ def inspect_tick_daily_reconciliation(
 
     verdict = _quality_verdict(checks, fail_on_severity=cfg.fail_on_severity)
     summary = {
-        "tick_rows": int(len(raw)),
+        "tick_rows": int(aggregate_meta["source_rows"]),
         "tick_symbol_days": int(len(tick_daily)),
         "daily_reference_rows": int(len(daily)),
         "matched_symbol_days": (

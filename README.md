@@ -108,7 +108,7 @@ rqdata-tick health \
   --out-units artifacts/reports/tick_health_units.csv
 ```
 
-`health` 会输出数据集级 summary，并可写出 symbol-date 级诊断。检查范围包括 timestamp、重复 key、同 timestamp 冲突、盘口阶梯、负深度量、累计成交量/成交额回落、session phase 等。
+`health` 会按 parquet 分片扫描，输出数据集级 summary，并可写出 symbol-date 级诊断。检查范围包括 timestamp、重复 key、同 timestamp 冲突、盘口阶梯、负深度量、累计成交量/成交额回落、session phase 等。
 
 日频聚合：
 
@@ -119,6 +119,7 @@ rqdata-tick aggregate-daily \
 ```
 
 聚合结果包含价差、深度、订单不平衡、VWAP 和质量标记，例如 `quote_quality_flag`、`vwap_quality_flag`、`is_usable_for_research`。
+raw 输入按分片增量读取，metadata 会记录 `source_rows` 和 `source_parts`。
 
 ## Tick 与日频对账
 

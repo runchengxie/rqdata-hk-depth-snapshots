@@ -28,6 +28,25 @@ def _date_range(df: pd.DataFrame) -> tuple[str | None, str | None]:
     return str(values.min()), str(values.max())
 
 
+def _date_range_from_values(values: list[str]) -> tuple[str | None, str | None]:
+    clean = [str(value) for value in values if value]
+    if not clean:
+        return None, None
+    return min(clean), max(clean)
+
+
+def _ordered_union(rows: list[dict[str, Any]], key: str) -> list[str]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for row in rows:
+        for value in row.get(key) or []:
+            text = str(value)
+            if text not in seen:
+                seen.add(text)
+                values.append(text)
+    return values
+
+
 def _manifest_base(
     *,
     schema_version: str,
@@ -59,23 +78,36 @@ def emit_raw_asset(source_root: str | Path, output_root: str | Path) -> dict[str
     output = Path(output_root)
     data_root = output / "data"
     copied = copy_parquet_tree(source, data_root)
-    df = load_parquet_parts(source)
     identity_columns = {"order_book_id", "datetime", "trading_date"}
-    fields = [column for column in df.columns if column not in identity_columns]
-    symbols = (
-        sorted(df["order_book_id"].dropna().astype(str).unique()) if "order_book_id" in df else []
-    )
     coverage_rows = scan_raw_coverage(source)
     coverage = coverage_summary(coverage_rows)
+    non_empty_rows = [row for row in coverage_rows if int(row.get("row_count") or 0) > 0]
+    fields = [
+        column
+        for column in _ordered_union(coverage_rows, "fields")
+        if column not in identity_columns
+    ]
+    symbols = sorted(
+        {
+            str(row["order_book_id"])
+            for row in non_empty_rows
+            if row.get("order_book_id") is not None
+        }
+    )
+    dates = [
+        str(row["trading_date"])
+        for row in non_empty_rows
+        if row.get("trading_date") is not None
+    ]
     manifest = _manifest_base(
         schema_version="tick_depth_raw.v1",
         provider="rqdata",
         market="hk",
         frequency="tick",
         source_path=source,
-        row_count=int(len(df)),
+        row_count=sum(int(row.get("row_count") or 0) for row in coverage_rows),
         symbol_count=len(symbols),
-        date_range=_date_range(df),
+        date_range=_date_range_from_values(dates),
         fields=fields,
     )
     manifest["files"] = [str(path.relative_to(output)) for path in copied]

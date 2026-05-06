@@ -33,6 +33,9 @@ metadata 记录请求参数、字段、交易日、layout、parquet 配置、quo
 
 audit 按 `trade_date + order_book_id` 记录 `written`、`skipped_existing`、`empty_remote`、`failed`、`quota_blocked` 等状态。
 
+`aggregate-daily` metadata 记录 `source_rows`、`source_parts`、`source_fields`、输出行数和缺失源字段。
+这些统计来自分片级扫描，适合 raw cache 较大时复核聚合输入规模。
+
 ## Asset Output
 
 `emit-asset` 会输出 `manifest.yml`、`meta.json`、`symbols.txt` 和 `fields.txt`。raw asset 保留 parquet 分片；daily asset 保存聚合后的 parquet。

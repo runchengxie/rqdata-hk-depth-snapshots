@@ -1,6 +1,7 @@
 # Quality Checks
 
 `health` 检查 raw tick 数据自身质量。输出包含数据集级 summary 和 symbol-date 级 `unit_diagnostics`。
+raw parquet 会按分片增量扫描，报告中只为触发 warning 的 symbol-date 保留样例行。
 
 当前检查包括：
 
@@ -25,3 +26,7 @@
 - `is_usable_for_cost_model`
 
 这些字段只描述数据可用性，不代表交易建议。
+
+`aggregate-daily` 和 `reconcile-daily` 对 raw tick 输入使用分片级增量读取。内存中主要保留
+单个 parquet 分片、symbol-date 诊断、日频聚合行和最终对账表，适合全周期小样本或核心池
+续跑后直接做质量门禁。

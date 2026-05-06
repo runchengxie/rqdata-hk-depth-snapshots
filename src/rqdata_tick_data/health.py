@@ -17,7 +17,7 @@ from rqdata_tick_data.quality import (
 )
 from rqdata_tick_data.storage import (
     atomic_write_parquet,
-    load_parquet_parts,
+    discover_parquet_parts,
     metadata_path,
     write_json,
 )
@@ -213,7 +213,12 @@ def _unit_check_names(row: dict[str, Any]) -> list[str]:
     return checks
 
 
-def _unit_diagnostics(work: pd.DataFrame, sample_limit: int = 5) -> list[dict[str, Any]]:
+def _unit_diagnostics(
+    work: pd.DataFrame,
+    sample_limit: int = 5,
+    *,
+    sample_clean_units: bool = False,
+) -> list[dict[str, Any]]:
     if work.empty:
         return []
     diagnostics: list[dict[str, Any]] = []
@@ -251,23 +256,25 @@ def _unit_diagnostics(work: pd.DataFrame, sample_limit: int = 5) -> list[dict[st
         }
         row["check_names"] = _unit_check_names(row)
         row["severity"] = "warning" if row["check_names"] else "none"
-        sample_cols = [
-            column
-            for column in (
-                "order_book_id",
-                "trading_date",
-                "datetime",
-                "last",
-                "a1",
-                "b1",
-                "volume",
-                "total_turnover",
+        row["sample_rows"] = []
+        if row["check_names"] or sample_clean_units:
+            sample_cols = [
+                column
+                for column in (
+                    "order_book_id",
+                    "trading_date",
+                    "datetime",
+                    "last",
+                    "a1",
+                    "b1",
+                    "volume",
+                    "total_turnover",
+                )
+                if column in group.columns
+            ]
+            row["sample_rows"] = _clean_records(
+                group.loc[:, sample_cols].head(sample_limit).to_dict("records")
             )
-            if column in group.columns
-        ]
-        row["sample_rows"] = _clean_records(
-            group.loc[:, sample_cols].head(sample_limit).to_dict("records")
-        )
         diagnostics.append(row)
     return diagnostics
 
@@ -335,15 +342,10 @@ def _build_quality_checks(report: dict[str, Any]) -> list[dict[str, Any]]:
     return checks
 
 
-def inspect_raw_health(
-    input_root: str | Path,
-    *,
-    fail_on_severity: str = "error",
-) -> dict[str, Any]:
-    df = load_parquet_parts(input_root)
-    report: dict[str, Any] = {
+def _empty_report(input_root: str | Path) -> dict[str, Any]:
+    return {
         "input_root": str(input_root),
-        "row_count": int(len(df)),
+        "row_count": 0,
         "symbol_count": 0,
         "date_count": 0,
         "timestamp_start": None,
@@ -384,51 +386,185 @@ def inspect_raw_health(
         "status": "pass",
     }
 
-    if df.empty:
+
+def _add_field_missing_counts(
+    missing_counts: dict[str, int],
+    seen_columns: set[str],
+    frame: pd.DataFrame,
+    *,
+    prior_rows: int,
+) -> None:
+    frame_columns = set(frame.columns)
+    frame_rows = int(len(frame))
+    for column in seen_columns - frame_columns:
+        missing_counts[column] += frame_rows
+    for column in frame.columns:
+        if column not in missing_counts:
+            missing_counts[column] = prior_rows
+        missing_counts[column] += int(frame[column].isna().sum())
+    seen_columns.update(frame_columns)
+
+
+def _append_invalid_spread_groups(
+    groups: list[dict[str, Any]],
+    work: pd.DataFrame,
+    *,
+    limit: int = 20,
+) -> None:
+    if len(groups) >= limit:
+        return
+    group_cols = [col for col in ("order_book_id", "trading_date") if col in work.columns]
+    if not group_cols:
+        return
+    flags = quote_ladder_flags(work)
+    crossed = work.loc[flags["crossed_best_spread"], group_cols]
+    if crossed.empty:
+        return
+    for row in _clean_records(crossed.drop_duplicates().to_dict("records")):
+        if row not in groups:
+            groups.append(row)
+        if len(groups) >= limit:
+            break
+
+
+def _finish_health_report(report: dict[str, Any], fail_on_severity: str) -> dict[str, Any]:
+    report["quality_checks"] = _build_quality_checks(report)
+    report["quality_verdict"] = quality_verdict(
+        report["quality_checks"],
+        fail_on_severity=fail_on_severity,
+        include_sample_failing_checks=True,
+    )
+    return report
+
+
+def inspect_raw_health(
+    input_root: str | Path,
+    *,
+    fail_on_severity: str = "error",
+) -> dict[str, Any]:
+    parts = discover_parquet_parts(input_root)
+    report: dict[str, Any] = {
+        **_empty_report(input_root),
+        "part_count": len(parts),
+    }
+
+    if not parts:
         report["failures"].append("empty_dataset")
         report["status"] = "fail"
-        report["quality_checks"] = _build_quality_checks(report)
-        report["quality_verdict"] = quality_verdict(
-            report["quality_checks"],
-            fail_on_severity=fail_on_severity,
-            include_sample_failing_checks=True,
-        )
-        return report
+        return _finish_health_report(report, fail_on_severity)
 
-    missing = [col for col in REQUIRED_RAW_COLUMNS if col not in df.columns]
+    seen_columns: set[str] = set()
+    missing_counts: dict[str, int] = {}
+    symbols: set[str] = set()
+    dates: set[str] = set()
+    timestamp_start: pd.Timestamp | None = None
+    timestamp_end: pd.Timestamp | None = None
+    quote_positive_count = 0
+    quote_bad_count = 0
+    rows_missing_a1_column = 0
+    rows_missing_b1_column = 0
+    rows_missing_quote_columns = 0
+    units: list[dict[str, Any]] = []
+
+    for part in parts:
+        frame = pd.read_parquet(part)
+        prior_rows = int(report["row_count"])
+        frame_rows = int(len(frame))
+        report["row_count"] = prior_rows + frame_rows
+        _add_field_missing_counts(
+            missing_counts,
+            seen_columns,
+            frame,
+            prior_rows=prior_rows,
+        )
+        if frame_rows == 0:
+            continue
+
+        work = _prepare_work(frame)
+        if "order_book_id" in frame.columns:
+            symbols.update(frame["order_book_id"].dropna().astype(str).unique())
+        if "trading_date" in work.columns:
+            dates.update(work["trading_date"].dropna().astype(str).unique())
+
+        timestamps = work["_timestamp"]
+        report["timestamp_parse_failure_count"] = int(
+            report.get("timestamp_parse_failure_count", 0)
+        ) + int(timestamps.isna().sum())
+        if timestamps.notna().any():
+            part_start = timestamps.min()
+            part_end = timestamps.max()
+            timestamp_start = (
+                part_start if timestamp_start is None else min(timestamp_start, part_start)
+            )
+            timestamp_end = part_end if timestamp_end is None else max(timestamp_end, part_end)
+
+        part_units = _unit_diagnostics(work, sample_clean_units=False)
+        units.extend(part_units)
+        quote_stats = _quote_stats(work)
+        for metric in (
+            "best_bid_missing_count",
+            "best_ask_missing_count",
+            "best_spread_cross_count",
+            "best_spread_zero_count",
+            "ask_ladder_inversion_count",
+            "bid_ladder_inversion_count",
+            "quote_ladder_invalid_count",
+            "negative_depth_volume_count",
+        ):
+            report[metric] = int(report.get(metric) or 0) + int(quote_stats.get(metric) or 0)
+        if {"a1", "b1"}.issubset(work.columns):
+            quote_positive_count += int(
+                round(float(quote_stats["quote_coverage_ratio"] or 0) * frame_rows)
+            )
+            quote_bad_count += int(round(float(quote_stats["bad_quote_ratio"] or 0) * frame_rows))
+        else:
+            rows_missing_quote_columns += frame_rows
+        if "a1" not in work.columns:
+            rows_missing_a1_column += frame_rows
+        if "b1" not in work.columns:
+            rows_missing_b1_column += frame_rows
+        if quote_stats.get("best_spread_cross_count"):
+            _append_invalid_spread_groups(report["invalid_best_spread_groups"], work)
+
+    if report["row_count"] == 0:
+        report["failures"].append("empty_dataset")
+        report["status"] = "fail"
+
+    missing = [col for col in REQUIRED_RAW_COLUMNS if col not in seen_columns]
     report["missing_required_columns"] = missing
     if missing:
         report["failures"].append("missing_required_columns")
         report["status"] = "fail"
 
-    work = _prepare_work(df)
-    if "order_book_id" in df.columns:
-        report["symbol_count"] = int(df["order_book_id"].nunique(dropna=True))
-    if "trading_date" in work.columns:
-        report["date_count"] = int(work["trading_date"].nunique(dropna=True))
+    report["symbol_count"] = len(symbols)
+    report["date_count"] = len(dates)
+    if timestamp_start is not None:
+        report["timestamp_start"] = timestamp_start.isoformat()
+    if timestamp_end is not None:
+        report["timestamp_end"] = timestamp_end.isoformat()
+    if report["row_count"]:
+        report["field_missing_rates"] = {
+            str(column): float(count / int(report["row_count"]))
+            for column, count in sorted(missing_counts.items())
+        }
 
-    timestamps = work["_timestamp"]
-    report["timestamp_parse_failure_count"] = int(timestamps.isna().sum())
-    if timestamps.notna().any():
-        report["timestamp_start"] = timestamps.min().isoformat()
-        report["timestamp_end"] = timestamps.max().isoformat()
-
-    report["field_missing_rates"] = {
-        str(column): float(rate) for column, rate in df.isna().mean(numeric_only=False).items()
-    }
-
-    units = _unit_diagnostics(work)
     report["unit_diagnostics"] = units
-    global_duplicate_stats = _duplicate_stats(work)
-    report.update(global_duplicate_stats)
-    report.update(_quote_stats(work))
+    for metric in (
+        "duplicate_row_count",
+        "duplicate_key_count",
+        "exact_duplicate_row_count",
+        "same_timestamp_conflict_count",
+    ):
+        report[metric] = _sum_units(units, metric)
+    if "a1" in seen_columns:
+        report["best_ask_missing_count"] += rows_missing_a1_column
+    if "b1" in seen_columns:
+        report["best_bid_missing_count"] += rows_missing_b1_column
+    if {"a1", "b1"}.issubset(seen_columns) and report["row_count"]:
+        quote_bad_count += rows_missing_quote_columns
+        report["quote_coverage_ratio"] = float(quote_positive_count / int(report["row_count"]))
+        report["bad_quote_ratio"] = float(quote_bad_count / int(report["row_count"]))
     report["invalid_best_spread_count"] = report["best_spread_cross_count"]
-
-    if report["best_spread_cross_count"]:
-        group_cols = [col for col in ("order_book_id", "trading_date") if col in work.columns]
-        flags = quote_ladder_flags(work)
-        groups = work.loc[flags["crossed_best_spread"], group_cols].drop_duplicates().head(20)
-        report["invalid_best_spread_groups"] = _clean_records(groups.to_dict("records"))
 
     for metric in (
         "timestamp_non_monotonic_count",
@@ -465,13 +601,7 @@ def inspect_raw_health(
     ]
     report["warnings"] = [metric for metric in warning_metrics if int(report.get(metric) or 0)]
 
-    report["quality_checks"] = _build_quality_checks(report)
-    report["quality_verdict"] = quality_verdict(
-        report["quality_checks"],
-        fail_on_severity=fail_on_severity,
-        include_sample_failing_checks=True,
-    )
-    return report
+    return _finish_health_report(report, fail_on_severity)
 
 
 def _write_unit_diagnostics(path: str | Path, units: list[dict[str, Any]]) -> Path:
