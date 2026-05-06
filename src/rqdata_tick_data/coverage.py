@@ -101,6 +101,10 @@ def _read_identity_frame(path: Path, columns: Sequence[str]) -> pd.DataFrame:
     return pd.read_parquet(path, columns=selected)
 
 
+def _field_sets_match(data_fields: Sequence[str], requested_fields: Sequence[str]) -> bool:
+    return len(data_fields) == len(requested_fields) and set(data_fields) == set(requested_fields)
+
+
 def inspect_raw_part(
     path: str | Path,
     *,
@@ -137,7 +141,7 @@ def inspect_raw_part(
     if missing_required:
         base_status = STATUS_SCHEMA_MISMATCH
         reason = f"missing required columns: {', '.join(missing_required)}"
-    elif requested and data_fields != requested:
+    elif requested and not _field_sets_match(data_fields, requested):
         base_status = STATUS_FIELD_MISMATCH
         reason = "parquet fields do not match requested fields"
     elif row_count == 0:

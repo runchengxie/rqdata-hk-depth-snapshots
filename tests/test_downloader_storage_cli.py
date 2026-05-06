@@ -222,6 +222,33 @@ def test_resume_redownloads_field_mismatch(tmp_path) -> None:
     assert result["rows"] == 4
 
 
+def test_resume_accepts_existing_part_with_reordered_fields(tmp_path) -> None:
+    root = tmp_path / "cache"
+    requested_fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
+    provider_order = parse_fields("last volume total_turnover a1 b1 a1_v b1_v")
+    frame = FakeProvider().get_price(
+        ["00001.XHKG"],
+        "20250303",
+        "20250303",
+        provider_order,
+    )
+    atomic_write_parquet(frame.reset_index(), symbol_date_part_path(root, "20250303", "00001.XHKG"))
+
+    result = download_tick_depth(
+        provider=NoCallProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=root,
+        fields=requested_fields,
+        batch_size=1,
+        resume=True,
+    )
+
+    assert result["audit_status_counts"]["skipped_existing"] == 1
+    assert result["skipped_units"][0]["validation_status"] == "valid"
+
+
 @pytest.mark.parametrize(
     ("frame", "expected_status"),
     [
