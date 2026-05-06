@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import ast
 import os
 import re
 from pathlib import Path
@@ -7,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from rqdata_tick_data.cli import main
+from rqdata_tick_data.cli import build_parser, main
 from rqdata_tick_data.storage import atomic_write_parquet
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +152,63 @@ def _markdown_files() -> list[Path]:
     ]
 
 
+def _project_authored_markdown_files() -> list[Path]:
+    return [
+        path
+        for path in _markdown_files()
+        if "docs/vendor" not in path.relative_to(REPO_ROOT).as_posix()
+    ]
+
+
+def _stable_markdown_files() -> list[Path]:
+    return [
+        path
+        for path in _project_authored_markdown_files()
+        if "docs/records" not in path.relative_to(REPO_ROOT).as_posix()
+    ]
+
+
+def _parser_commands() -> dict[str, set[str]]:
+    parser = build_parser()
+    commands: dict[str, set[str]] = {}
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for command, subparser in action.choices.items():
+                options: set[str] = set()
+                for sub_action in subparser._actions:
+                    options.update(
+                        option
+                        for option in sub_action.option_strings
+                        if option.startswith("--")
+                    )
+                commands[command] = options
+    return commands
+
+
+def _rqdata_client_env_vars() -> set[str]:
+    path = REPO_ROOT / "src/rqdata_tick_data/rq_client.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and func.attr == "getenv"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "os"
+        ):
+            continue
+        if not node.args:
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            if arg.value.startswith("RQDATA_"):
+                names.add(arg.value)
+    return names
+
+
 def test_markdown_internal_links_exist() -> None:
     pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
     missing: list[str] = []
@@ -166,6 +225,38 @@ def test_markdown_internal_links_exist() -> None:
             if not target_path.exists():
                 missing.append(f"{path.relative_to(REPO_ROOT)} -> {target}")
     assert not missing
+
+
+def test_cli_docs_cover_parser_commands_and_options() -> None:
+    docs = (REPO_ROOT / "docs/cli.md").read_text(encoding="utf-8")
+    missing: list[str] = []
+    for command, options in _parser_commands().items():
+        if command not in docs:
+            missing.append(command)
+        for option in sorted(options):
+            if option not in docs:
+                missing.append(f"{command}: {option}")
+    assert not missing
+
+
+def test_rqdata_env_example_and_docs_match_client() -> None:
+    expected = _rqdata_client_env_vars()
+    env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    documented = "\n".join(
+        [
+            (REPO_ROOT / "docs/providers-rqdata.md").read_text(encoding="utf-8"),
+            (REPO_ROOT / "docs/development.md").read_text(encoding="utf-8"),
+            (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
+        ]
+    )
+    env_sample_vars = set(re.findall(r"#?\s*(RQDATA_[A-Z_]+)=", env_example))
+    extra = env_sample_vars - expected
+    missing_from_sample = expected - env_sample_vars
+    missing_from_docs = sorted(name for name in expected if name not in documented)
+
+    assert not extra
+    assert not missing_from_sample
+    assert not missing_from_docs
 
 
 def test_readme_and_agents_required_sections() -> None:
@@ -201,13 +292,53 @@ def test_readme_and_agents_required_sections() -> None:
 
 
 def test_docs_avoid_known_contrastive_phrases() -> None:
-    banned = ("不是.*而是", "而非", "而不是", "本页不解决什么")
+    banned = ("不是.*而是", "而非", "而不是", "本页不解决什么", "不作为.*而", "不直接.*而")
     offenders: list[str] = []
-    for path in _markdown_files():
+    for path in _project_authored_markdown_files():
         text = path.read_text(encoding="utf-8")
         for phrase in banned:
             if re.search(phrase, text):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {phrase}")
+    assert not offenders
+
+
+def test_stable_docs_do_not_contain_local_or_dated_record_facts() -> None:
+    banned = ("/home/", "TRIAL", "1GB/day")
+    offenders: list[str] = []
+    for path in _stable_markdown_files():
+        text = path.read_text(encoding="utf-8")
+        for phrase in banned:
+            if phrase in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {phrase}")
+    assert not offenders
+
+
+def test_records_are_dated_and_mark_record_context() -> None:
+    offenders: list[str] = []
+    records_dir = REPO_ROOT / "docs/records"
+    for path in sorted(records_dir.glob("*.md")):
+        if path.name == "README.md":
+            continue
+        text = path.read_text(encoding="utf-8")
+        heading = text.splitlines()[0] if text.splitlines() else ""
+        has_date = re.search(r"\d{4}-\d{2}-\d{2}", path.name) or re.search(
+            r"\d{4}-\d{2}-\d{2}", heading
+        )
+        if not has_date:
+            offenders.append(f"{path.relative_to(REPO_ROOT)}: missing date")
+        if not re.search(r"记录日期|Status date", text):
+            offenders.append(f"{path.relative_to(REPO_ROOT)}: missing record date context")
+        if "/home/" in text and not re.search(r"本地|record-specific|记录", text):
+            offenders.append(f"{path.relative_to(REPO_ROOT)}: local path lacks record context")
+    assert not offenders
+
+
+def test_stable_docs_do_not_depend_on_local_configs() -> None:
+    offenders: list[str] = []
+    for path in _stable_markdown_files():
+        text = path.read_text(encoding="utf-8")
+        if "configs/" in text:
+            offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders
 
 

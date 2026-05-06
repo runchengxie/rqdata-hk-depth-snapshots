@@ -7,13 +7,12 @@
 适用范围：当前 RQData `TRIAL` 账号、约 `1GB/day` quota、历史 tick 最早可用日
 `2025-04-01`。
 
-相关依据：[下载规模估算快照](hk-tick-download-sizing.md)。
+相关依据：[下载规模估算快照](2026-05-06-hk-tick-download-sizing.md)、
+[Round 1 标的说明](2026-05-06-hk-tick-round1-symbols.md)。
 
 ## 决策原则
 
-tick-depth 数据不作为全市场基础行情底座，而作为微观结构、交易成本、流动性和
-执行质量研究资产。低频研究默认消费 `aggregate-daily` 产物，raw tick 主要用于
-审计、质量门禁、特征重算和样本校准。
+tick-depth 数据定位为微观结构、交易成本、流动性和执行质量研究资产。全市场基础行情继续使用日频或其他低频数据源。低频研究默认消费 `aggregate-daily` 产物，raw tick 主要用于审计、质量门禁、特征重算和样本校准。
 
 当前阶段不下载全市场 tick-depth。优先把小而稳定的核心资产跑通，再按研究收益
 逐层扩展。
@@ -43,7 +42,7 @@ a1-a10 a1_v-a10_v b1-b10 b1_v-b10_v
 
 ## 第一轮试下载
 
-第一轮不直接下载 20 标的全周期，而先跑首月：
+第一轮先跑 20 标的首月样本：
 
 ```text
 标的文件：configs/universe/hk_tick_depth_round1_20.txt

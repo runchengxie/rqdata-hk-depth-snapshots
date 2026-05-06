@@ -202,12 +202,12 @@ UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
   --fail-on-severity warning
 ```
 
-和 cross daily clean 研究底座对照时使用 research policy：
+和 cross daily clean 研究底座对照时使用 research policy。下面的 daily asset 路径是记录日期使用的本地样例，可按实际资产目录替换：
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
   --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
-  --daily-asset-dir /home/richard/code/cross-sectional-hk-tree/artifacts/assets/rqdata/hk/daily/hk_all_2000_20260504_daily_clean_refetched_latest \
+  --daily-asset-dir artifacts/assets/rqdata/hk/daily_clean/example \
   --out artifacts/reports/tick_daily_reconcile_cross_clean.json \
   --reference-policy cross-clean \
   --fail-on-severity warning

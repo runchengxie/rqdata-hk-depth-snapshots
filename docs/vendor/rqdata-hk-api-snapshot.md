@@ -2,13 +2,13 @@
 
 用途：保留米筐港股 API 的离线语义参考，方便在离线环境下查字段和接口。
 
-边界：当前工作区资产状态、CLI 用法和下载策略见仓库主文档与 playbook。
+边界：当前工作区资产状态、CLI 用法和下载策略见仓库主文档与带日期执行记录。
 
 适合读者：需要离线核对 RQData 港股接口语义的人。
 
-相关页面：[RQData 使用范围](README.md)、[HK RQData 状态索引](../playbooks/hk-rqdata-status.md)、[Providers](../providers.md)
+相关页面：[Vendor 参考](README.md)、[HK RQData 状态记录](../records/2026-05-06-hk-rqdata-status.md)、[RQData Provider](../providers-rqdata.md)
 
-下方保留 vendor 文档快照。项目当前核心功能只使用其中和港股合约、交易日历、tick 深度、日频 reference 与 quota 相关的部分。若本页与仓库代码、`manifest.yml`、playbook 或本地资产状态冲突，以仓库当前实现和本地资产记录为准。
+下方保留 vendor 文档快照。项目当前核心功能只使用其中和港股合约、交易日历、tick 深度、日频 reference 与 quota 相关的部分。若本页与仓库代码、`manifest.yml`、执行记录或本地资产状态冲突，以仓库当前实现和本地资产记录为准。
 
 ## RQData金融数据API文档 （港股（公测版本））
 

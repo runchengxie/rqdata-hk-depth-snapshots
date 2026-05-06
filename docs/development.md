@@ -1,0 +1,83 @@
+# 开发与维护
+
+## 安装
+
+离线开发依赖：
+
+```bash
+uv sync --group dev
+```
+
+真实 RQData provider 依赖：
+
+```bash
+uv sync --extra rqdata --group dev
+```
+
+live extras 只在需要访问 provider 时安装。
+
+## 测试
+
+离线测试：
+
+```bash
+uv run pytest
+```
+
+lint：
+
+```bash
+uv run ruff check .
+```
+
+离线测试使用 `FakeProvider`，不需要 RQData 账号。
+
+## Live Tests
+
+live smoke 需要显式开启：
+
+```bash
+uv sync --extra rqdata --group dev
+RQDATA_TICK_LIVE_TESTS=1 uv run pytest -m rqdata_live
+```
+
+live smoke 只做最小 quota 或 provider 检查。
+
+## 环境变量
+
+真实 RQData 认证可使用 `.env.example`：
+
+```bash
+cp .env.example .env
+```
+
+`RQDataClient` 通过 `python-dotenv` 读取 `.env`。支持变量：
+
+- `RQDATA_USERNAME`
+- `RQDATA_USER`
+- `RQDATA_PASSWORD`
+- `RQDATA_URI`
+
+本项目没有维护默认 `.envrc.example`。如需 direnv，可自行让 `.envrc` 只加载 `.env` 或 `.env.local`，依赖安装仍使用显式 `uv sync` 命令。
+
+## 文档契约测试
+
+`tests/test_cli_docs_contracts.py` 负责约束：
+
+- CLI help 可打开。
+- README 风格离线命令可用。
+- markdown 内链存在。
+- `docs/cli.md` 覆盖 parser 暴露的命令和参数。
+- `.env.example` 与 `RQDataClient` 环境变量一致。
+- 稳定文档没有本地绝对路径。
+- records 带有日期和记录语境。
+- 项目文档避开绕弯对比句式。
+
+CLI 参数、输出布局、metadata、audit 字段或质量检查发生变化时，同步更新文档和测试。
+
+## 维护工具
+
+`project_tools/` 是维护工具目录，不属于 runtime 行为。当前维护债清单见
+[internal/maintenance-debt-inventory.md](internal/maintenance-debt-inventory.md)。
+
+大型 raw cache 不应通过临时脚本整目录读入内存。需要健康检查、聚合、对账和 asset 输出时，优先使用 CLI 入口。

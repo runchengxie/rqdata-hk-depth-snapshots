@@ -78,5 +78,7 @@ The `batch` raw layout remains readable for historical compatibility. New downlo
 
 - Update README and docs when CLI arguments, output layout, metadata, audit fields, or quality checks change.
 - Keep README short and link detailed docs from `docs/`.
-- Keep playbooks dated when they include account-specific quota, provider behavior, or sample estimates.
+- Keep dated account-specific quota, provider behavior, download coverage, or sample estimates under `docs/records/`.
+- Keep stable docs organized around `docs/workflow.md`, `docs/data-contracts.md`, `docs/quality-gates.md`, `docs/providers-rqdata.md`, and `docs/development.md`.
+- Keep copied provider API snapshots under `docs/vendor/` and avoid presenting them as project support scope.
 - Do not add secrets, local credentials, or private tokens to docs, tests, metadata examples, or code.
