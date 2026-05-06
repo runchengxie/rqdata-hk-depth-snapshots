@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from rqdata_tick_data import __version__
+from rqdata_tick_data.coverage import coverage_summary, scan_raw_coverage
 from rqdata_tick_data.storage import (
     copy_parquet_tree,
     discover_parquet_parts,
@@ -59,10 +60,13 @@ def emit_raw_asset(source_root: str | Path, output_root: str | Path) -> dict[str
     data_root = output / "data"
     copied = copy_parquet_tree(source, data_root)
     df = load_parquet_parts(source)
-    fields = [column for column in df.columns if column not in {"order_book_id", "datetime"}]
+    identity_columns = {"order_book_id", "datetime", "trading_date"}
+    fields = [column for column in df.columns if column not in identity_columns]
     symbols = (
         sorted(df["order_book_id"].dropna().astype(str).unique()) if "order_book_id" in df else []
     )
+    coverage_rows = scan_raw_coverage(source)
+    coverage = coverage_summary(coverage_rows)
     manifest = _manifest_base(
         schema_version="tick_depth_raw.v1",
         provider="rqdata",
@@ -75,6 +79,21 @@ def emit_raw_asset(source_root: str | Path, output_root: str | Path) -> dict[str
         fields=fields,
     )
     manifest["files"] = [str(path.relative_to(output)) for path in copied]
+    manifest["layout_version"] = (
+        coverage["layout_versions"][0]
+        if len(coverage["layout_versions"]) == 1
+        else "mixed" if coverage["layout_versions"] else None
+    )
+    manifest["compression"] = (
+        coverage["compressions"][0]
+        if len(coverage["compressions"]) == 1
+        else "mixed" if coverage["compressions"] else None
+    )
+    manifest["storage"] = {
+        "layout_versions": coverage["layout_versions"],
+        "compressions": coverage["compressions"],
+    }
+    manifest["coverage"] = coverage
     write_yaml(output / "manifest.yml", manifest)
     (output / "symbols.txt").write_text(
         "\n".join(symbols) + ("\n" if symbols else ""),

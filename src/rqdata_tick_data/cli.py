@@ -51,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--fields")
     download.add_argument("--out", required=True)
     download.add_argument("--batch-size", type=int, default=5)
+    download.add_argument("--raw-layout", choices=["symbol-date", "batch"], default="symbol-date")
+    download.add_argument("--parquet-engine", default="pyarrow")
+    download.add_argument("--compression", dest="parquet_compression", default="snappy")
+    download.add_argument("--compression-level", dest="parquet_compression_level", type=int)
     download.add_argument("--resume", dest="resume", action="store_true", default=True)
     download.add_argument("--no-resume", dest="resume", action="store_false")
     download.add_argument("--continue-on-error", action="store_true")
@@ -105,6 +109,10 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
                 resume=args.resume,
                 continue_on_error=args.continue_on_error,
                 dry_run=args.dry_run,
+                raw_layout=args.raw_layout,
+                parquet_engine=args.parquet_engine,
+                parquet_compression=args.parquet_compression,
+                parquet_compression_level=args.parquet_compression_level,
             )
             _print_json(result)
             return 0

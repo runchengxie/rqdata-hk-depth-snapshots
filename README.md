@@ -60,6 +60,41 @@ rqdata-tick download \
   --resume
 ```
 
+New raw downloads default to a symbol-date layout:
+
+```text
+parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
+```
+
+Resume validates readable parquet contents, requested fields, symbol identity, and trading date
+before skipping local data. This makes incremental reruns safe for adding symbols or repairing
+bad parts without redownloading already valid symbol-date units.
+
+The legacy batch layout remains available for compatibility:
+
+```bash
+rqdata-tick download \
+  --symbols-file symbols.txt \
+  --start-date 20250303 \
+  --end-date 20250307 \
+  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
+  --raw-layout batch
+```
+
+Parquet output uses explicit writer settings. The default is pyarrow + snappy, which is a good
+download and research-stage default. Use zstd only after benchmarking a representative tick
+sample for file size, write time, and read time:
+
+```bash
+rqdata-tick download \
+  --symbols 00001.XHKG,00700.XHKG \
+  --start-date 20250303 \
+  --end-date 20250307 \
+  --out artifacts/cache/rqdata/hk_tick_depth/hk_probe \
+  --compression zstd \
+  --compression-level 3
+```
+
 Example health check:
 
 ```bash

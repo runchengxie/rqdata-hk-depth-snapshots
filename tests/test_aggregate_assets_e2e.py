@@ -8,7 +8,7 @@ from rqdata_tick_data.cli import main
 from rqdata_tick_data.downloader import download_tick_depth
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.health import write_health_report
-from rqdata_tick_data.storage import load_parquet_parts
+from rqdata_tick_data.storage import load_parquet_parts, symbol_date_part_path
 from rqdata_tick_data.testing import FakeProvider
 
 
@@ -63,6 +63,45 @@ def test_offline_end_to_end_and_assets(tmp_path) -> None:
     assert daily_asset["row_count"] == 2
     assert (tmp_path / "asset_raw" / "manifest.yml").exists()
     assert (tmp_path / "asset_daily" / "manifest.yml").exists()
+
+
+def test_legacy_batch_and_symbol_date_layouts_remain_compatible(tmp_path) -> None:
+    raw_root = tmp_path / "mixed_raw"
+    fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
+    download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=raw_root,
+        fields=fields,
+        batch_size=1,
+        raw_layout="batch",
+    )
+    download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00700.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=raw_root,
+        fields=fields,
+        batch_size=1,
+        raw_layout="symbol-date",
+    )
+
+    assert len(load_parquet_parts(raw_root)) == 8
+    assert symbol_date_part_path(raw_root, "20250303", "00700.XHKG").exists()
+
+    health = write_health_report(raw_root)
+    assert health["status"] == "pass"
+
+    aggregate_path = tmp_path / "mixed_daily" / "data.parquet"
+    aggregate_meta = write_daily_aggregate(raw_root, aggregate_path)
+    assert aggregate_meta["rows"] == 2
+
+    raw_asset = emit_raw_asset(raw_root, tmp_path / "mixed_asset_raw")
+    assert raw_asset["layout_version"] == "mixed"
+    assert raw_asset["coverage"]["valid_units"] == 2
 
 
 def test_cli_offline_end_to_end(tmp_path) -> None:
