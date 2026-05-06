@@ -219,3 +219,6 @@ __marimo__/
 
 # Debugging purpose
 full_project_source.txt
+
+# Local generated data and reports
+artifacts/
