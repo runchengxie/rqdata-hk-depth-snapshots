@@ -273,6 +273,75 @@ info checks：
 `reconcile-daily` 和 raw `emit-asset` 按 parquet 分片扫描，避免把全周期 raw
 cache 一次性合并到单个 DataFrame。
 
+## 全周期续下载完成记录
+
+执行时间：2026-05-07。
+
+同一输出目录使用 `--resume` 继续后，Round 1 20 标的在目标区间
+`2025-04-01` 到 `2026-05-06` 的 `5,360` 个 symbol-day 已全部进入终态：
+`written`、`skipped_existing` 或 `empty_remote`。本轮无 `quota_blocked`、无
+`failed`。
+
+续下载 metadata 摘要：
+
+| 项 | 结果 |
+| --- | ---: |
+| skipped existing symbol-days | 2,706 |
+| newly written symbol-days | 1,669 |
+| empty remote symbol-days | 985 |
+| quota blocked symbol-days | 0 |
+| failed | 0 |
+| new raw rows this run | 16,112,939 |
+| full raw rows after resume | 44,763,273 |
+| raw parquet 分片 | 5,360 |
+| raw cache 大小 | 约 2.1G |
+| daily aggregate rows | 4,375 |
+
+quota 记录：
+
+| 项 | bytes_used | bytes_remaining | used_pct |
+| --- | ---: | ---: | ---: |
+| 续下载前 | 41,857 | 1,073,699,967 | 0.00% |
+| 续下载后 | 469,248,446 | 604,493,378 | 43.70% |
+
+输出记录：
+
+| 类型 | 路径 |
+| --- | --- |
+| download metadata | `artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506/meta/download_20260506_215649.json` |
+| download audit | `artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506/audit/download_20260506_215602_5147aad0.csv` |
+| health report | `artifacts/reports/tick_health_round1_20_20250401_20260506.json` |
+| health unit diagnostics | `artifacts/reports/tick_health_round1_20_20250401_20260506_units.csv` |
+| daily aggregate | `artifacts/cache/rqdata/hk_tick_depth_daily/round1_20_20250401_20260506/data.parquet` |
+| daily aggregate metadata | `artifacts/cache/rqdata/hk_tick_depth_daily/round1_20_20250401_20260506/meta/aggregate_daily_full.json` |
+
+全周期 health 结果：
+
+| 项 | 结果 |
+| --- | --- |
+| dataset status | pass |
+| overall severity | warning |
+| failing issue count | 0 |
+| warning checks | `timestamp_non_monotonic`、`volume_decrease_count`、`turnover_decrease_count` |
+| timestamp 回退 | 12 |
+| volume 回落 | 12 |
+| turnover 回落 | 14 |
+| duplicate key | 0 |
+| quote ladder invalid | 0 |
+| negative depth volume | 0 |
+| outside session rows | 0 |
+
+全周期 daily aggregate 质量标记：
+
+| 字段 | 分布 |
+| --- | --- |
+| `quote_quality_flag` | pass 4,321 / warning 54 |
+| `vwap_quality_flag` | pass 4,361 / warning 14 |
+| `coverage_quality_flag` | pass 4,375 |
+| `tick_count_quality_flag` | pass 4,309 / warning 66 |
+| `is_usable_for_research` | true 4,375 |
+| `is_usable_for_cost_model` | true 4,321 / false 54 |
+
 ## 扩展规则
 
 Round 1 首月稳定后，再下载同一 20 标的全周期：
