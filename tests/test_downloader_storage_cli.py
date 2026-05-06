@@ -24,21 +24,59 @@ class CountingProvider(FakeProvider):
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def get_price(self, order_book_ids, start_date, end_date, fields):  # noqa: ANN001
+    def get_price(  # noqa: ANN001
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
         self.calls.append(
             {
                 "order_book_ids": tuple(order_book_ids),
                 "start_date": start_date,
                 "end_date": end_date,
                 "fields": tuple(fields),
+                "adjust_type": adjust_type,
+                "time_slice": time_slice,
             }
         )
-        return super().get_price(order_book_ids, start_date, end_date, fields)
+        return super().get_price(
+            order_book_ids,
+            start_date,
+            end_date,
+            fields,
+            adjust_type,
+            time_slice,
+        )
 
 
 class NoCallProvider(FakeProvider):
-    def get_price(self, order_book_ids, start_date, end_date, fields):  # noqa: ANN001
+    def get_price(  # noqa: ANN001
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
         raise AssertionError("provider should not be called")
+
+
+class EmptyProvider(FakeProvider):
+    def get_price(  # noqa: ANN001
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
+        return pd.DataFrame()
 
 
 def test_batch_path_and_metadata_path(tmp_path) -> None:
@@ -218,6 +256,69 @@ def test_incremental_added_symbol_only_downloads_missing_unit(tmp_path) -> None:
     assert result["completed_units"][0]["order_book_id"] == "00700.XHKG"
 
 
+def test_provider_calendar_skips_non_trading_dates(tmp_path) -> None:
+    root = tmp_path / "cache"
+    fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
+    provider = CountingProvider()
+    result = download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG"],
+        start_date="20250301",
+        end_date="20250303",
+        output_root=root,
+        fields=fields,
+        batch_size=1,
+        calendar="provider",
+    )
+    assert result["trade_dates"] == ["20250303"]
+    assert result["calendar_source"] == "provider"
+    assert [call["start_date"] for call in provider.calls] == ["20250303"]
+
+
+def test_calendar_mode_keeps_natural_days_for_offline_planning(tmp_path) -> None:
+    result = download_tick_depth(
+        provider=None,
+        symbols=["00001.XHKG"],
+        start_date="20250301",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        dry_run=True,
+        calendar="calendar",
+    )
+    assert result["trade_dates"] == ["20250301", "20250302", "20250303"]
+    assert result["calendar_source"] == "calendar"
+
+
+def test_download_passes_raw_adjustment_and_time_slice(tmp_path) -> None:
+    provider = CountingProvider()
+    download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume"),
+        adjust_type="none",
+        time_slice="09:30:00-10:00:00",
+    )
+    assert provider.calls[0]["adjust_type"] == "none"
+    assert provider.calls[0]["time_slice"] == "09:30:00-10:00:00"
+
+
+def test_empty_provider_units_are_marked_in_metadata(tmp_path) -> None:
+    result = download_tick_depth(
+        provider=EmptyProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume"),
+    )
+
+    assert result["rows"] == 0
+    assert result["empty_units"][0]["order_book_id"] == "00001.XHKG"
+
+
 def test_batched_provider_response_writes_symbol_date_parts(tmp_path) -> None:
     root = tmp_path / "cache"
     fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
@@ -311,3 +412,12 @@ def test_cli_download_dry_run_and_fake_provider(tmp_path, capsys) -> None:
     )
     assert code == 0
     assert symbol_date_part_path(out, "20250303", "00001.XHKG").exists()
+
+
+def test_cli_quota_fake_provider_pretty(capsys) -> None:
+    code = main(["quota", "--fake-provider", "--pretty"])
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "Quota usage" in output
+    assert "bytes_remaining" in output

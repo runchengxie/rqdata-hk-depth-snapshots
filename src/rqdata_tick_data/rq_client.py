@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import pandas as pd
 
 from rqdata_tick_data.exceptions import ProviderRequestError
+from rqdata_tick_data.quota import augment_quota_payload, quota_to_payload
 
 
 class TickDataProvider(Protocol):
@@ -20,11 +21,16 @@ class TickDataProvider(Protocol):
         start_date: str,
         end_date: str,
         fields: Sequence[str],
+        adjust_type: str = "none",
+        time_slice: str | None = None,
     ) -> pd.DataFrame:
         """Return tick data for the requested identifiers and dates."""
 
-    def quota_snapshot(self) -> dict[str, object] | None:
+    def quota_snapshot(self) -> Any:
         """Return account/quota data when available."""
+
+    def get_trading_dates(self, start_date: str, end_date: str) -> list[str]:
+        """Return HK trading dates formatted as YYYYMMDD."""
 
 
 def classify_provider_exception(exc: BaseException) -> str:
@@ -54,6 +60,7 @@ class RQDataClient:
         uri: str | None = None,
         initialize: bool = True,
     ) -> None:
+        self._load_dotenv()
         try:
             import rqdatac  # type: ignore[import-not-found]
         except Exception as exc:  # pragma: no cover - depends on optional provider package
@@ -64,11 +71,19 @@ class RQDataClient:
             ) from exc
 
         self._rqdatac = rqdatac
-        self.username = username or os.getenv("RQDATA_USERNAME")
+        self.username = username or os.getenv("RQDATA_USERNAME") or os.getenv("RQDATA_USER")
         self.password = password or os.getenv("RQDATA_PASSWORD")
         self.uri = uri or os.getenv("RQDATA_URI")
         if initialize:
             self._initialize()
+
+    @staticmethod
+    def _load_dotenv() -> None:
+        try:
+            from dotenv import load_dotenv
+        except Exception:
+            return
+        load_dotenv()
 
     def _initialize(self) -> None:
         try:
@@ -96,23 +111,39 @@ class RQDataClient:
         start_date: str,
         end_date: str,
         fields: Sequence[str],
+        adjust_type: str = "none",
+        time_slice: str | None = None,
     ) -> pd.DataFrame:
+        kwargs = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "frequency": "tick",
+            "fields": list(fields),
+            "adjust_type": adjust_type,
+            "market": "hk",
+            "expect_df": True,
+        }
+        if time_slice:
+            kwargs["time_slice"] = time_slice
         try:
             return self._rqdatac.get_price(
                 list(order_book_ids),
-                start_date=start_date,
-                end_date=end_date,
-                frequency="tick",
-                fields=list(fields),
-                market="hk",
-                expect_df=True,
+                **kwargs,
             )
         except Exception as exc:  # pragma: no cover - provider-specific behavior
             raise ProviderRequestError(
                 classify_provider_exception(exc), "get_price", str(exc)
             ) from exc
 
-    def quota_snapshot(self) -> dict[str, object] | None:
+    def quota_snapshot(self) -> Any:
+        user = getattr(self._rqdatac, "user", None)
+        if user is not None:
+            getter = getattr(user, "get_quota", None)
+            if callable(getter):
+                try:
+                    return augment_quota_payload(quota_to_payload(getter()))
+                except Exception:
+                    pass
         for name in ("get_quota", "quota", "get_account_info", "user_info"):
             attr = getattr(self._rqdatac, name, None)
             if attr is None:
@@ -123,7 +154,28 @@ class RQDataClient:
                 continue
             if value is None:
                 continue
-            if isinstance(value, dict):
-                return value
-            return {"value": repr(value)}
+            payload = augment_quota_payload(quota_to_payload(value))
+            return payload if isinstance(payload, dict) else {"value": payload}
         return None
+
+    def get_trading_dates(self, start_date: str, end_date: str) -> list[str]:
+        getter = getattr(self._rqdatac, "get_trading_dates", None)
+        if not callable(getter):
+            raise ProviderRequestError(
+                "provider_error",
+                "get_trading_dates",
+                "rqdatac.get_trading_dates is unavailable.",
+            )
+        try:
+            values = getter(start_date, end_date, market="hk")
+        except TypeError:
+            values = getter(start_date, end_date)
+        except Exception as exc:  # pragma: no cover - provider-specific behavior
+            raise ProviderRequestError(
+                classify_provider_exception(exc), "get_trading_dates", str(exc)
+            ) from exc
+        return [
+            pd.Timestamp(value).strftime("%Y%m%d")
+            for value in values
+            if pd.notna(pd.Timestamp(value))
+        ]

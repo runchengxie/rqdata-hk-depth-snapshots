@@ -16,6 +16,8 @@ class FakeProvider:
         start_date: str,
         end_date: str,
         fields: Sequence[str],
+        adjust_type: str = "none",
+        time_slice: str | None = None,
     ) -> pd.DataFrame:
         rows = []
         index = []
@@ -34,7 +36,13 @@ class FakeProvider:
                 cumulative_turnover += last * 1000 * tick_index
                 row = {"trading_date": start_date}
                 for field in fields:
-                    if field == "last":
+                    if field == "open":
+                        row[field] = base
+                    elif field == "high":
+                        row[field] = last + 0.05
+                    elif field == "low":
+                        row[field] = base - 0.05
+                    elif field == "last":
                         row[field] = last
                     elif field == "volume":
                         row[field] = cumulative_volume
@@ -42,6 +50,12 @@ class FakeProvider:
                         row[field] = cumulative_turnover
                     elif field == "prev_close":
                         row[field] = base - 0.25
+                    elif field == "num_trades":
+                        row[field] = pd.NA
+                    elif field in {"limit_up", "limit_down"}:
+                        row[field] = pd.NA
+                    elif field == "change_rate":
+                        row[field] = (last / (base - 0.25) - 1) * 100
                     elif field.startswith("a") and field.endswith("_v"):
                         level = int(field[1:-2])
                         row[field] = 1000 + level * 10
@@ -63,4 +77,19 @@ class FakeProvider:
         return frame
 
     def quota_snapshot(self) -> dict[str, object]:
-        return {"fake": True}
+        return {
+            "fake": True,
+            "bytes_used": 100_000,
+            "bytes_limit": 1_000_000,
+            "bytes_remaining": 900_000,
+            "used_pct": 10.0,
+            "remaining_pct": 90.0,
+        }
+
+    def get_trading_dates(self, start_date: str, end_date: str) -> list[str]:
+        dates = pd.date_range(
+            f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}",
+            f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}",
+            freq="B",
+        )
+        return [date.strftime("%Y%m%d") for date in dates]

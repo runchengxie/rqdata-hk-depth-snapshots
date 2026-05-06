@@ -72,10 +72,12 @@ def build_batch_plan(
     end_date: str,
     output_root: str | Path,
     batch_size: int,
+    trade_dates: Sequence[str] | None = None,
 ) -> list[BatchPlan]:
     root = Path(output_root)
     batches: list[BatchPlan] = []
-    for trade_date in iter_dates(start_date, end_date):
+    dates = list(trade_dates) if trade_dates is not None else list(iter_dates(start_date, end_date))
+    for trade_date in dates:
         for batch_number, symbol_batch in enumerate(chunked(list(symbols), batch_size)):
             batches.append(
                 BatchPlan(
@@ -93,10 +95,12 @@ def build_symbol_date_plan(
     start_date: str,
     end_date: str,
     output_root: str | Path,
+    trade_dates: Sequence[str] | None = None,
 ) -> list[UnitPlan]:
     root = Path(output_root)
     units: list[UnitPlan] = []
-    for trade_date in iter_dates(start_date, end_date):
+    dates = list(trade_dates) if trade_dates is not None else list(iter_dates(start_date, end_date))
+    for trade_date in dates:
         for symbol in symbols:
             units.append(
                 UnitPlan(
@@ -115,6 +119,34 @@ def normalize_raw_layout(value: str) -> str:
     if normalized in {"batch", "legacy-batch", "legacy"}:
         return "batch"
     raise ValueError("raw_layout must be one of: symbol-date, batch.")
+
+
+def normalize_calendar(value: str) -> str:
+    normalized = value.strip().lower().replace("_", "-")
+    if normalized in {"provider", "rqdata", "trading", "trading-days"}:
+        return "provider"
+    if normalized in {"calendar", "natural", "all-days"}:
+        return "calendar"
+    raise ValueError("calendar must be one of: provider, calendar.")
+
+
+def _resolve_trade_dates(
+    *,
+    provider: TickDataProvider | None,
+    start_date: str,
+    end_date: str,
+    calendar: str,
+) -> tuple[list[str], str]:
+    normalized = normalize_calendar(calendar)
+    if normalized == "provider" and provider is not None and hasattr(provider, "get_trading_dates"):
+        dates = [format_date(value) for value in provider.get_trading_dates(start_date, end_date)]
+        return dates, "provider"
+    source = "calendar"
+    if normalized == "provider" and provider is None:
+        source = "calendar_fallback_no_provider"
+    elif normalized == "provider":
+        source = "calendar_fallback_no_provider_method"
+    return list(iter_dates(start_date, end_date)), source
 
 
 def _quota_snapshot(provider: TickDataProvider | None) -> dict[str, Any]:
@@ -158,6 +190,10 @@ def _base_metadata(
     output_root: str | Path,
     batch_size: int,
     storage: dict[str, Any],
+    trade_dates: Sequence[str],
+    calendar_source: str,
+    adjust_type: str,
+    time_slice: str | None,
 ) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -169,6 +205,11 @@ def _base_metadata(
         "symbols_requested": list(symbols),
         "fields_requested": list(fields),
         "batch_size": batch_size,
+        "trade_dates": list(trade_dates),
+        "trade_date_count": len(trade_dates),
+        "calendar_source": calendar_source,
+        "adjust_type": adjust_type,
+        "time_slice": time_slice,
         "output_root": str(output_root),
         "storage": storage,
         "raw_layout": storage["raw_layout"],
@@ -182,6 +223,7 @@ def _base_metadata(
         "completed_units": [],
         "skipped_units": [],
         "invalid_units": [],
+        "empty_units": [],
         "failed_units": [],
         "rows": 0,
     }
@@ -285,9 +327,13 @@ def _download_symbol_date_tick_depth(
     dry_run: bool,
     metadata_kind: str,
     storage: dict[str, Any],
+    trade_dates: Sequence[str],
+    calendar_source: str,
+    adjust_type: str,
+    time_slice: str | None,
 ) -> dict[str, Any]:
     root = Path(output_root)
-    units = build_symbol_date_plan(symbols, start_date, end_date, root)
+    units = build_symbol_date_plan(symbols, start_date, end_date, root, trade_dates=trade_dates)
     metadata = _base_metadata(
         kind=metadata_kind,
         symbols=symbols,
@@ -297,6 +343,10 @@ def _download_symbol_date_tick_depth(
         output_root=root,
         batch_size=batch_size,
         storage=storage,
+        trade_dates=trade_dates,
+        calendar_source=calendar_source,
+        adjust_type=adjust_type,
+        time_slice=time_slice,
     )
     metadata["planned_units"] = [_unit_info(unit) for unit in units]
 
@@ -370,6 +420,8 @@ def _download_symbol_date_tick_depth(
                     start_date=batch.trade_date,
                     end_date=batch.trade_date,
                     fields=fields,
+                    adjust_type=adjust_type,
+                    time_slice=time_slice,
                 )
                 normalized = normalize_tick_frame(raw, fields)
                 batch_rows = 0
@@ -379,6 +431,10 @@ def _download_symbol_date_tick_depth(
                     atomic_write_parquet(unit_frame, unit.part_path, **writer)
                     row_count = int(len(unit_frame))
                     batch_rows += row_count
+                    if row_count == 0:
+                        metadata["empty_units"].append(
+                            _unit_info(unit, reason="provider returned no rows")
+                        )
                     metadata["completed_units"].append(
                         _unit_info(unit, rows=row_count, columns=list(unit_frame.columns))
                     )
@@ -444,9 +500,20 @@ def _download_batch_tick_depth(
     dry_run: bool,
     metadata_kind: str,
     storage: dict[str, Any],
+    trade_dates: Sequence[str],
+    calendar_source: str,
+    adjust_type: str,
+    time_slice: str | None,
 ) -> dict[str, Any]:
     root = Path(output_root)
-    plans = build_batch_plan(symbols, start_date, end_date, root, batch_size)
+    plans = build_batch_plan(
+        symbols,
+        start_date,
+        end_date,
+        root,
+        batch_size,
+        trade_dates=trade_dates,
+    )
     metadata = _base_metadata(
         kind=metadata_kind,
         symbols=symbols,
@@ -456,6 +523,10 @@ def _download_batch_tick_depth(
         output_root=root,
         batch_size=batch_size,
         storage=storage,
+        trade_dates=trade_dates,
+        calendar_source=calendar_source,
+        adjust_type=adjust_type,
+        time_slice=time_slice,
     )
     metadata["planned_units"] = [
         {
@@ -573,6 +644,8 @@ def _download_batch_tick_depth(
                     start_date=plan.trade_date,
                     end_date=plan.trade_date,
                     fields=fields,
+                    adjust_type=adjust_type,
+                    time_slice=time_slice,
                 )
                 normalized = normalize_tick_frame(raw, fields)
                 atomic_write_parquet(normalized, plan.part_path, **writer)
@@ -585,12 +658,22 @@ def _download_batch_tick_depth(
                         normalized,
                         UnitPlan(plan.trade_date, symbol, plan.part_path),
                     )
+                    unit_rows = int(len(unit_frame))
+                    if unit_rows == 0:
+                        metadata["empty_units"].append(
+                            {
+                                "trade_date": plan.trade_date,
+                                "order_book_id": symbol,
+                                "part_path": str(plan.part_path),
+                                "reason": "provider returned no rows",
+                            }
+                        )
                     metadata["completed_units"].append(
                         {
                             "trade_date": plan.trade_date,
                             "order_book_id": symbol,
                             "part_path": str(plan.part_path),
-                            "rows": int(len(unit_frame)),
+                            "rows": unit_rows,
                             "columns": list(unit_frame.columns),
                         }
                     )
@@ -634,6 +717,9 @@ def download_tick_depth(
     dry_run: bool = False,
     metadata_kind: str = "download",
     raw_layout: str = "symbol-date",
+    calendar: str = "provider",
+    adjust_type: str = "none",
+    time_slice: str | None = None,
     parquet_engine: str = DEFAULT_PARQUET_ENGINE,
     parquet_compression: str | None = DEFAULT_PARQUET_COMPRESSION,
     parquet_compression_level: int | None = None,
@@ -641,6 +727,13 @@ def download_tick_depth(
     """Download tick-depth snapshots into parquet parts and write run metadata."""
     selected_fields = list(fields or DEFAULT_TICK_DEPTH_FIELDS)
     layout = normalize_raw_layout(raw_layout)
+    normalized_calendar = normalize_calendar(calendar)
+    trade_dates, calendar_source = _resolve_trade_dates(
+        provider=provider,
+        start_date=start_date,
+        end_date=end_date,
+        calendar=normalized_calendar,
+    )
     storage = _storage_settings(
         raw_layout=layout,
         parquet_engine=parquet_engine,
@@ -661,6 +754,10 @@ def download_tick_depth(
             dry_run=dry_run,
             metadata_kind=metadata_kind,
             storage=storage,
+            trade_dates=trade_dates,
+            calendar_source=calendar_source,
+            adjust_type=adjust_type,
+            time_slice=time_slice,
         )
     return _download_symbol_date_tick_depth(
         provider=provider,
@@ -675,6 +772,10 @@ def download_tick_depth(
         dry_run=dry_run,
         metadata_kind=metadata_kind,
         storage=storage,
+        trade_dates=trade_dates,
+        calendar_source=calendar_source,
+        adjust_type=adjust_type,
+        time_slice=time_slice,
     )
 
 
@@ -685,6 +786,8 @@ def probe_tick_depth(
     trade_date: str,
     output_root: str | Path,
     fields: Sequence[str] | None = None,
+    adjust_type: str = "none",
+    time_slice: str | None = None,
 ) -> dict[str, Any]:
     """Run a one-symbol one-day probe and return a compact summary."""
     metadata = download_tick_depth(
@@ -698,6 +801,9 @@ def probe_tick_depth(
         resume=False,
         continue_on_error=False,
         metadata_kind="probe",
+        calendar="calendar",
+        adjust_type=adjust_type,
+        time_slice=time_slice,
     )
     completed = metadata["completed_units"][0] if metadata["completed_units"] else {}
     summary = {
@@ -708,6 +814,11 @@ def probe_tick_depth(
         "parquet_path": completed.get("part_path"),
         "metadata_path": metadata.get("metadata_path"),
     }
+    if not metadata["rows"]:
+        summary["warning"] = (
+            "provider returned zero rows; check the trade date, symbol, suspension status, "
+            "and account tick-history entitlement window"
+        )
 
     if completed.get("part_path"):
         import pandas as pd

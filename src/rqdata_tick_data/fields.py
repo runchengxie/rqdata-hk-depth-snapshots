@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-BASE_TICK_FIELDS: tuple[str, ...] = ("last", "volume", "total_turnover", "prev_close")
+BASE_TICK_FIELDS: tuple[str, ...] = (
+    "open",
+    "high",
+    "low",
+    "last",
+    "prev_close",
+    "volume",
+    "total_turnover",
+    "num_trades",
+    "limit_up",
+    "limit_down",
+    "change_rate",
+)
 ASK_PRICE_FIELDS: tuple[str, ...] = tuple(f"a{i}" for i in range(1, 11))
 ASK_VOLUME_FIELDS: tuple[str, ...] = tuple(f"a{i}_v" for i in range(1, 11))
 BID_PRICE_FIELDS: tuple[str, ...] = tuple(f"b{i}" for i in range(1, 11))

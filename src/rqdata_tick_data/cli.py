@@ -16,6 +16,7 @@ from rqdata_tick_data.downloader import (
 )
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.health import format_health_summary, write_health_report
+from rqdata_tick_data.quota import augment_quota_payload, format_quota_pretty
 from rqdata_tick_data.rq_client import RQDataClient, TickDataProvider
 from rqdata_tick_data.symbols import parse_symbols
 
@@ -40,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--symbol", required=True)
     probe.add_argument("--date", required=True)
     probe.add_argument("--fields")
+    probe.add_argument("--adjust-type", default="none")
+    probe.add_argument("--time-slice")
     probe.add_argument("--out", default="artifacts/cache/rqdata/hk_tick_depth/probe")
     probe.add_argument("--fake-provider", action="store_true")
 
@@ -49,9 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--start-date", required=True)
     download.add_argument("--end-date", required=True)
     download.add_argument("--fields")
+    download.add_argument("--adjust-type", default="none")
+    download.add_argument("--time-slice")
     download.add_argument("--out", required=True)
     download.add_argument("--batch-size", type=int, default=5)
     download.add_argument("--raw-layout", choices=["symbol-date", "batch"], default="symbol-date")
+    download.add_argument("--calendar", choices=["provider", "calendar"], default="provider")
     download.add_argument("--parquet-engine", default="pyarrow")
     download.add_argument("--compression", dest="parquet_compression", default="snappy")
     download.add_argument("--compression-level", dest="parquet_compression_level", type=int)
@@ -64,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     health = subparsers.add_parser("health", help="Inspect raw parquet cache health.")
     health.add_argument("--input", required=True)
     health.add_argument("--out-json")
+    health.add_argument(
+        "--fail-on-severity",
+        choices=["none", "info", "warning", "error"],
+        default="error",
+    )
 
     aggregate = subparsers.add_parser("aggregate-daily", help="Aggregate raw ticks to daily data.")
     aggregate.add_argument("--input", required=True)
@@ -74,6 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
     asset.add_argument("--source", required=True)
     asset.add_argument("--output", required=True)
+
+    quota = subparsers.add_parser("quota", help="Show RQData quota usage.")
+    quota.add_argument("--pretty", action="store_true")
+    quota.add_argument("--fake-provider", action="store_true")
 
     return parser
 
@@ -91,13 +106,17 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
                 trade_date=args.date,
                 fields=parse_fields(args.fields),
                 output_root=Path(args.out),
+                adjust_type=args.adjust_type,
+                time_slice=args.time_slice,
             )
             _print_json(result)
             return 0
 
         if args.command == "download":
             symbols = parse_symbols(args.symbols, args.symbols_file)
-            selected_provider = None if args.dry_run else provider or _provider(args.fake_provider)
+            selected_provider = None
+            if not args.dry_run or args.fake_provider:
+                selected_provider = provider or _provider(args.fake_provider)
             result = download_tick_depth(
                 provider=selected_provider,
                 symbols=symbols,
@@ -106,6 +125,9 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
                 output_root=Path(args.out),
                 fields=parse_fields(args.fields),
                 batch_size=args.batch_size,
+                adjust_type=args.adjust_type,
+                time_slice=args.time_slice,
+                calendar=args.calendar,
                 resume=args.resume,
                 continue_on_error=args.continue_on_error,
                 dry_run=args.dry_run,
@@ -118,9 +140,16 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
             return 0
 
         if args.command == "health":
-            report = write_health_report(args.input, args.out_json)
+            report = write_health_report(
+                args.input,
+                args.out_json,
+                fail_on_severity=args.fail_on_severity,
+            )
             print(format_health_summary(report))
             print(f"report_path={report['report_path']}")
+            verdict = report.get("quality_verdict")
+            if isinstance(verdict, dict) and verdict.get("gate_triggered"):
+                return 2
             return 0 if report["status"] == "pass" else 1
 
         if args.command == "aggregate-daily":
@@ -134,6 +163,15 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
             else:
                 metadata = emit_daily_asset(args.source, args.output)
             _print_json(metadata)
+            return 0
+
+        if args.command == "quota":
+            selected_provider = provider or _provider(args.fake_provider)
+            payload = augment_quota_payload(selected_provider.quota_snapshot())
+            if args.pretty:
+                print(format_quota_pretty(payload))
+            else:
+                print(json.dumps(payload, indent=2, sort_keys=True, default=str))
             return 0
 
     except Exception as exc:
