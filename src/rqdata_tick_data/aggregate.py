@@ -43,6 +43,7 @@ DAILY_METRIC_COLUMNS = (
     "is_usable_for_research",
     "is_usable_for_cost_model",
 )
+DAILY_OUTPUT_COLUMNS = ("order_book_id", "trading_date", *DAILY_METRIC_COLUMNS)
 
 
 def _num(df: pd.DataFrame, column: str) -> pd.Series:
@@ -289,8 +290,7 @@ def unavailable_metrics(df: pd.DataFrame) -> dict[str, list[str]]:
 
 def aggregate_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        columns = ["order_book_id", "trading_date", *DAILY_METRIC_COLUMNS]
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=DAILY_OUTPUT_COLUMNS)
     required = {"order_book_id", "trading_date"}
     missing = required - set(df.columns)
     if missing:
@@ -303,7 +303,7 @@ def aggregate_daily_frame(df: pd.DataFrame) -> pd.DataFrame:
     for column in DAILY_METRIC_COLUMNS:
         if column not in out.columns:
             out[column] = pd.NA
-    return out[["order_book_id", "trading_date", *DAILY_METRIC_COLUMNS]]
+    return out[list(DAILY_OUTPUT_COLUMNS)]
 
 
 def aggregate_daily_parts(input_root: str | Path) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -355,7 +355,10 @@ def aggregate_daily_parts(input_root: str | Path) -> tuple[pd.DataFrame, dict[st
         )
 
     if rows:
-        output = pd.concat(rows, ignore_index=True).sort_values(
+        concat_ready = [frame.dropna(axis=1, how="all") for frame in rows]
+        output = pd.concat(concat_ready, ignore_index=True).reindex(
+            columns=DAILY_OUTPUT_COLUMNS
+        ).sort_values(
             ["order_book_id", "trading_date"],
             ignore_index=True,
         )

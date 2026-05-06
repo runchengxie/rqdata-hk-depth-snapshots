@@ -151,6 +151,129 @@ quota 阻断或 parquet/resume 问题。
 | `aggregate-daily` | 输出行数应接近非空 symbol-day 数 |
 | parquet 总大小 | 用于更新后续 Core/Connect 估算 |
 
+## 全周期续下载阶段记录
+
+执行时间：2026-05-06。
+
+目标范围：
+
+```text
+标的文件：configs/universe/hk_tick_depth_round1_20.txt
+日期范围：2025-04-01 到 2026-05-06
+输出目录：artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506
+```
+
+本轮在 quota guard 触发前推进到 `2025-11-26`。当前目录保留为 partial raw
+cache，后续同命令使用 `--resume` 继续。
+
+下载 metadata 摘要：
+
+| 项 | 结果 |
+| --- | ---: |
+| raw rows | 28,650,334 |
+| raw parquet 分片 | 3,250 |
+| non-empty written symbol-days | 2,706 |
+| empty remote symbol-days | 544 |
+| quota blocked symbol-days | 2,110 |
+| failed | 0 |
+| raw cache 大小 | 约 1.4G |
+| 最新已写入交易日 | 2025-11-26 |
+
+quota 记录：
+
+| 项 | bytes_used | bytes_remaining | used_pct |
+| --- | ---: | ---: | ---: |
+| 续下载前 | 167,907,114 | 905,834,710 | 15.64% |
+| 续下载后 | 1,008,729,184 | 65,012,640 | 93.95% |
+
+当前账号只剩约 `62MB` 当日 quota，2026-05-06 不继续请求 provider。
+
+当前 coverage 观察：
+
+| 项 | 结果 |
+| --- | ---: |
+| pool symbols | 20 |
+| non-empty tick symbols | 18 |
+| all-empty symbols so far | `01469.XHKG`、`06880.XHKG` |
+| daily aggregate rows | 2,706 |
+| daily aggregate 大小 | 约 294K |
+
+全周期 partial health 结果：
+
+| 项 | 结果 |
+| --- | --- |
+| dataset status | pass |
+| warning checks | `timestamp_non_monotonic`、`volume_decrease_count`、`turnover_decrease_count` |
+| warning symbol-days | 10 |
+| timestamp 回退 | 8 |
+| volume 回落 | 8 |
+| turnover 回落 | 10 |
+| duplicate key | 0 |
+| same timestamp conflict | 0 |
+| quote ladder invalid | 0 |
+| negative depth volume | 0 |
+| outside session rows | 0 |
+
+warning units：
+
+| symbol | date | checks |
+| --- | --- | --- |
+| `01810.XHKG` | 2025-04-11 | timestamp、volume、turnover |
+| `01810.XHKG` | 2025-04-23 | timestamp、volume、turnover |
+| `01810.XHKG` | 2025-05-14 | timestamp、volume、turnover |
+| `00515.XHKG` | 2025-07-08 | turnover |
+| `03690.XHKG` | 2025-07-21 | timestamp、volume、turnover |
+| `00005.XHKG` | 2025-07-24 | turnover |
+| `01810.XHKG` | 2025-09-01 | timestamp、volume、turnover |
+| `03690.XHKG` | 2025-10-09 | timestamp、volume、turnover |
+| `03690.XHKG` | 2025-11-20 | timestamp、volume、turnover |
+| `01810.XHKG` | 2025-11-25 | timestamp、volume、turnover |
+
+daily aggregate 质量标记：
+
+| 字段 | 分布 |
+| --- | --- |
+| `quote_quality_flag` | pass 2,668 / warning 38 |
+| `vwap_quality_flag` | pass 2,696 / warning 10 |
+| `coverage_quality_flag` | pass 2,706 |
+| `tick_count_quality_flag` | pass 2,657 / warning 49 |
+| `is_usable_for_research` | true 2,706 |
+| `is_usable_for_cost_model` | true 2,668 / false 38 |
+
+cross-clean 对账结果：
+
+| 项 | 结果 |
+| --- | ---: |
+| report status | pass |
+| matched tick symbol-days | 2,706 |
+| unmatched symbol count | 0 |
+| timestamp parse failures | 0 |
+| volume fallback count | 0 |
+| turnover fallback count | 0 |
+| warning checks | 2 |
+| info checks | 3 |
+
+warning checks：
+
+| check | affected | 说明 |
+| --- | ---: | --- |
+| `tick_ohlc_bounds_invalid` | 100 | tick 派生 OHLC 和 tick high/low 字段边界不一致，后续抽样复核 |
+| `daily_active_missing_tick` | 6 | 全部在 `2025-11-26`，与 quota guard 在该日附近截停一致 |
+
+info checks：
+
+| check | affected |
+| --- | ---: |
+| `tick_close_mismatch` | 1,253 |
+| `tick_volume_mismatch` | 200 |
+| `tick_turnover_mismatch` | 153 |
+
+这些 info 项来自 `cross-clean` reference policy，数值口径差异不作为 raw tick 下载门禁。
+
+本阶段还完成了 raw tick 后处理的低内存调整：`health`、`aggregate-daily`、
+`reconcile-daily` 和 raw `emit-asset` 按 parquet 分片扫描，避免把全周期 raw
+cache 一次性合并到单个 DataFrame。
+
 ## 扩展规则
 
 Round 1 首月稳定后，再下载同一 20 标的全周期：
