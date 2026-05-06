@@ -17,7 +17,11 @@ from rqdata_tick_data.downloader import (
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.health import format_health_summary, write_health_report
 from rqdata_tick_data.quota import augment_quota_payload, format_quota_pretty
-from rqdata_tick_data.reconcile import ReconcileConfig, write_reconciliation_report
+from rqdata_tick_data.reconcile import (
+    REFERENCE_POLICIES,
+    ReconcileConfig,
+    write_reconciliation_report,
+)
 from rqdata_tick_data.rq_client import RQDataClient, TickDataProvider
 from rqdata_tick_data.symbols import parse_symbols
 
@@ -101,11 +105,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     reconcile = subparsers.add_parser(
         "reconcile-daily",
-        help="Reconcile raw ticks with an external daily clean asset.",
+        help="Reconcile raw ticks with an external daily reference asset.",
     )
     reconcile.add_argument("--tick-input", required=True)
     reconcile.add_argument("--daily-asset-dir", required=True)
     reconcile.add_argument("--out", required=True)
+    reconcile.add_argument(
+        "--reference-policy",
+        choices=REFERENCE_POLICIES,
+        default="raw-daily",
+        help=(
+            "raw-daily gates against a same-basis raw daily reference; cross-clean records "
+            "numeric basis mismatches as info for research clean assets."
+        ),
+    )
     reconcile.add_argument(
         "--fail-on-severity",
         choices=["none", "info", "warning", "error"],
@@ -224,6 +237,7 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
                 session_end=args.session_end,
                 sample_limit=args.sample_limit,
                 fail_on_severity=args.fail_on_severity,
+                reference_policy=args.reference_policy,
             )
             report = write_reconciliation_report(
                 args.tick_input,
@@ -234,6 +248,7 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
             _print_json(
                 {
                     "report_path": report["report_path"],
+                    "reference_policy": report["reference_policy"],
                     "summary": report["summary"],
                     "quality_verdict": report["quality_verdict"],
                     "status": report["status"],

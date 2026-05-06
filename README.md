@@ -157,17 +157,34 @@ rqdata-tick health \
   --fail-on-severity warning
 ```
 
-Tick 与 cross 日频资产对账示例：
+Tick 与日频资产对账分两种口径。正式下载质量门禁建议使用 raw daily reference，
+也就是和 tick 默认 `adjust_type=none` 同一报价口径的日频数据：
+
+```bash
+rqdata-tick reconcile-daily \
+  --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --daily-asset-dir artifacts/assets/rqdata/hk/daily_raw/hk_tick_gate_20250401_20260506 \
+  --out artifacts/reports/tick_daily_reconcile_raw_gate.json \
+  --reference-policy raw-daily \
+  --fail-on-severity warning
+```
+
+如果只是和 cross daily clean 研究底座做覆盖检查，使用 `cross-clean` policy：
 
 ```bash
 rqdata-tick reconcile-daily \
   --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
   --daily-asset-dir /home/richard/code/cross-sectional-hk-tree/artifacts/assets/rqdata/hk/daily/hk_all_2000_20260504_daily_clean_refetched_latest \
-  --out artifacts/reports/tick_daily_reconcile_core.json \
+  --out artifacts/reports/tick_daily_reconcile_cross_clean.json \
+  --reference-policy cross-clean \
   --fail-on-severity warning
 ```
 
-`reconcile-daily` 会只读 raw tick 和外部 daily clean asset，不会复制或修改 cross 日频资产，也不会覆盖 raw tick。报告会检查 tick 聚合出的 close、累计 volume、累计 total_turnover 是否能和日频数据对上，并检查 OHLC 边界、盘口档位规则和港股 session 时间异常。
+`cross-clean` 会继续记录 `tick_close_mismatch`、`tick_volume_mismatch` 和
+`tick_turnover_mismatch`，但将这些数值口径差异标为 `info`，避免 adjusted/clean
+口径阻断 raw tick 下载门禁。`daily_active_missing_tick` 等覆盖问题仍是 warning，
+可在 `--fail-on-severity warning` 下触发门禁。`reconcile-daily` 只读 raw tick 和外部
+daily reference asset，不会复制或修改 cross 日频资产，也不会覆盖 raw tick。
 
 日度数据聚合示例：
 

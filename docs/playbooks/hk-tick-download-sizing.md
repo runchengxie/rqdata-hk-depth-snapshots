@@ -185,13 +185,26 @@ UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick aggregate-daily \
   --output artifacts/cache/rqdata/hk_tick_depth_daily/core_20250401_20260506/data.parquet
 ```
 
-Tick vs cross 日频对账：
+Tick vs 日频对账分两层。下载质量门禁使用和 raw tick 同一报价口径的 raw daily
+reference：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
+  --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --daily-asset-dir artifacts/assets/rqdata/hk/daily_raw/hk_tick_gate_20250401_20260506 \
+  --out artifacts/reports/tick_daily_reconcile_raw_gate.json \
+  --reference-policy raw-daily \
+  --fail-on-severity warning
+```
+
+和 cross daily clean 研究底座对照时使用 research policy：
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
   --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
   --daily-asset-dir /home/richard/code/cross-sectional-hk-tree/artifacts/assets/rqdata/hk/daily/hk_all_2000_20260504_daily_clean_refetched_latest \
-  --out artifacts/reports/tick_daily_reconcile_core.json \
+  --out artifacts/reports/tick_daily_reconcile_cross_clean.json \
+  --reference-policy cross-clean \
   --fail-on-severity warning
 ```
 
@@ -200,9 +213,9 @@ UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
 | check | 决策含义 |
 | --- | --- |
 | `daily_active_missing_tick` | 日频显示有成交但 tick 缺失，应优先确认权限、停牌和下载覆盖 |
-| `tick_close_mismatch` | 最后有效 tick 的 `last` 和日频 close 对不上，需检查复权口径和时间窗口 |
-| `tick_volume_mismatch` | tick 累计 volume 和日频 volume 对不上，需确认累计字段语义 |
-| `tick_turnover_mismatch` | tick 累计成交额和日频成交额对不上，需确认币种/单位/字段 |
+| `tick_close_mismatch` | 最后有效 tick 的 `last` 和日频 close 对不上；raw-daily 下可做门禁，cross-clean 下只作为口径提示 |
+| `tick_volume_mismatch` | tick 累计 volume 和日频 volume 对不上；raw-daily 下可做门禁，cross-clean 下先确认调整规则 |
+| `tick_turnover_mismatch` | tick 累计成交额和日频成交额对不上；raw-daily 下可做门禁，cross-clean 下先确认币种/单位/字段 |
 | `quote_ladder_invalid` | 十档盘口出现交叉、档位顺序异常或负盘口量 |
 | `session_time_outlier` | timestamp 超出默认 09:00-16:30 宽窗口 |
 
@@ -235,7 +248,8 @@ UV_CACHE_DIR=/tmp/uv-cache uv run --extra rqdata rqdata-tick download \
 
 说明：本次 provider `get_quota()` 在请求前后返回的 `bytes_used` 相同，因此 audit 中的 `quota_delta_bytes` 为 0。后续大批量下载仍应保留 `quota_before/quota_after`，但估算不要只依赖单个小请求的实时 delta。
 
-随后用 cross daily clean asset 跑 `reconcile-daily --fail-on-severity none`：
+随后用 cross daily clean asset 跑
+`reconcile-daily --reference-policy cross-clean --fail-on-severity none`：
 
 | 项 | 数值 |
 | --- | ---: |
@@ -244,7 +258,11 @@ UV_CACHE_DIR=/tmp/uv-cache uv run --extra rqdata rqdata-tick download \
 | quality_verdict.overall_severity | warning |
 | warning | `tick_close_mismatch` |
 
-样本中 tick raw close 为 `44.5`，cross daily clean close 为 `42.417416515886266`。这说明当前 cross daily clean reference 很可能不是 raw tick 同口径价格，对账命令能正确把这个差异暴露出来。正式用作门禁前，需要决定 daily reference 使用 raw 口径还是 adjusted/clean 口径。
+样本中 tick raw close 为 `44.5`，cross daily clean close 为 `42.417416515886266`。这说明当前 cross daily clean reference 很可能不是 raw tick 同口径价格，对账命令能正确把这个差异暴露出来。
+
+结论：正式门禁使用 raw daily reference；cross daily clean 只作为研究覆盖检查。
+`cross-clean` policy 会把数值口径 mismatch 标为 `info`，避免 adjusted/clean 价格阻断
+raw tick 下载质量门禁。
 
 ## 后续需要更新的现场数字
 

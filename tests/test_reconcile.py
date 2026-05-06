@@ -4,6 +4,7 @@ import pandas as pd
 
 from rqdata_tick_data.cli import main
 from rqdata_tick_data.reconcile import (
+    ReconcileConfig,
     aggregate_tick_ohlcv,
     inspect_tick_daily_reconciliation,
 )
@@ -139,10 +140,140 @@ def test_reconciliation_reports_close_mismatch_and_quote_ladder(tmp_path) -> Non
     )
 
     report = inspect_tick_daily_reconciliation(raw_root, daily_root)
-    checks = {check["check"] for check in report["quality_checks"]}
+    checks = {check["check"]: check for check in report["quality_checks"]}
 
     assert "tick_close_mismatch" in checks
+    assert checks["tick_close_mismatch"]["severity"] == "warning"
     assert "quote_ladder_invalid" in checks
+
+
+def test_cross_clean_reference_policy_records_numeric_mismatch_as_info(tmp_path) -> None:
+    raw_root = tmp_path / "raw"
+    daily_root = tmp_path / "daily"
+    _write_raw(
+        raw_root,
+        pd.DataFrame(
+            {
+                "order_book_id": ["00001.XHKG", "00700.XHKG"],
+                "datetime": [
+                    pd.Timestamp("2025-03-03 16:08"),
+                    pd.Timestamp("2025-03-04 16:08"),
+                ],
+                "trading_date": ["20250303", "20250304"],
+                "last": [100.0, 200.0],
+                "volume": [100.0, 200.0],
+                "total_turnover": [10000.0, 20000.0],
+            }
+        ),
+    )
+    _write_daily(
+        daily_root,
+        "00001.HK",
+        pd.DataFrame(
+            {
+                "trade_date": ["20250303"],
+                "symbol": ["00001.HK"],
+                "open": [101.0],
+                "high": [101.0],
+                "low": [101.0],
+                "close": [101.0],
+                "volume": [110.0],
+                "total_turnover": [11000.0],
+            }
+        ),
+    )
+    _write_daily(
+        daily_root,
+        "00700.HK",
+        pd.DataFrame(
+            {
+                "trade_date": ["20250304"],
+                "symbol": ["00700.HK"],
+                "open": [200.0],
+                "high": [200.0],
+                "low": [200.0],
+                "close": [200.0],
+                "volume": [200.0],
+                "total_turnover": [20000.0],
+            }
+        ),
+    )
+
+    report = inspect_tick_daily_reconciliation(
+        raw_root,
+        daily_root,
+        config=ReconcileConfig(fail_on_severity="warning", reference_policy="cross-clean"),
+    )
+    checks = {check["check"]: check for check in report["quality_checks"]}
+
+    assert report["reference_policy"]["name"] == "cross-clean"
+    assert checks["tick_close_mismatch"]["severity"] == "info"
+    assert checks["tick_volume_mismatch"]["severity"] == "info"
+    assert checks["tick_turnover_mismatch"]["severity"] == "info"
+    assert report["quality_verdict"]["gate_status"] == "pass"
+
+
+def test_cross_clean_reference_policy_keeps_coverage_warnings_gateable(tmp_path) -> None:
+    raw_root = tmp_path / "raw"
+    daily_root = tmp_path / "daily"
+    _write_raw(
+        raw_root,
+        pd.DataFrame(
+            {
+                "order_book_id": ["00001.XHKG", "00700.XHKG"],
+                "datetime": [
+                    pd.Timestamp("2025-03-03 16:08"),
+                    pd.Timestamp("2025-03-04 16:08"),
+                ],
+                "trading_date": ["20250303", "20250304"],
+                "last": [100.0, 200.0],
+                "volume": [100.0, 200.0],
+                "total_turnover": [10000.0, 20000.0],
+            }
+        ),
+    )
+    _write_daily(
+        daily_root,
+        "00001.HK",
+        pd.DataFrame(
+            {
+                "trade_date": ["20250303", "20250304"],
+                "symbol": ["00001.HK", "00001.HK"],
+                "open": [100.0, 101.0],
+                "high": [100.0, 101.0],
+                "low": [100.0, 101.0],
+                "close": [100.0, 101.0],
+                "volume": [100.0, 100.0],
+                "total_turnover": [10000.0, 10100.0],
+            }
+        ),
+    )
+    _write_daily(
+        daily_root,
+        "00700.HK",
+        pd.DataFrame(
+            {
+                "trade_date": ["20250304"],
+                "symbol": ["00700.HK"],
+                "open": [200.0],
+                "high": [200.0],
+                "low": [200.0],
+                "close": [200.0],
+                "volume": [200.0],
+                "total_turnover": [20000.0],
+            }
+        ),
+    )
+
+    report = inspect_tick_daily_reconciliation(
+        raw_root,
+        daily_root,
+        config=ReconcileConfig(fail_on_severity="warning", reference_policy="cross-clean"),
+    )
+    checks = {check["check"]: check for check in report["quality_checks"]}
+
+    assert checks["daily_active_missing_tick"]["severity"] == "warning"
+    assert report["quality_verdict"]["gate_status"] == "fail"
 
 
 def test_reconciliation_reports_active_daily_missing_tick(tmp_path) -> None:

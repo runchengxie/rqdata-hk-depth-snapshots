@@ -15,6 +15,50 @@ from rqdata_tick_data.symbols import normalize_hk_order_book_id
 
 SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
 FAIL_ON_SEVERITIES = ("none", "info", "warning", "error")
+REFERENCE_POLICIES = ("raw-daily", "cross-clean")
+ECONOMIC_MISMATCH_CHECKS = {
+    "tick_close_mismatch",
+    "tick_volume_mismatch",
+    "tick_turnover_mismatch",
+}
+
+
+def _normalize_reference_policy(value: str) -> str:
+    policy = value.strip().lower()
+    if policy not in REFERENCE_POLICIES:
+        raise ValueError("reference_policy must be one of: raw-daily, cross-clean.")
+    return policy
+
+
+def _policy_check_severity(*, check: str, severity: str, reference_policy: str) -> str:
+    if reference_policy == "cross-clean" and check in ECONOMIC_MISMATCH_CHECKS:
+        return "info"
+    return severity
+
+
+def _reference_policy_metadata(policy: str) -> dict[str, Any]:
+    if policy == "cross-clean":
+        return {
+            "name": policy,
+            "gate_reference": "raw-daily",
+            "research_reference": "cross-clean",
+            "description": (
+                "Use cross daily clean assets for research coverage checks. Numeric tick-vs-daily "
+                "mismatches are recorded as info because clean/adjusted prices may not share the "
+                "raw tick quote basis."
+            ),
+            "numeric_mismatch_severity": "info",
+        }
+    return {
+        "name": policy,
+        "gate_reference": "raw-daily",
+        "research_reference": "cross-clean",
+        "description": (
+            "Use a raw daily reference on the same quote basis as adjust_type=none ticks for "
+            "download-quality gates."
+        ),
+        "numeric_mismatch_severity": "warning",
+    }
 
 
 @dataclass(frozen=True)
@@ -29,6 +73,7 @@ class ReconcileConfig:
     session_end: str = "16:30"
     sample_limit: int = 20
     fail_on_severity: str = "error"
+    reference_policy: str = "raw-daily"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +87,7 @@ class ReconcileConfig:
             "session_end": self.session_end,
             "sample_limit": self.sample_limit,
             "fail_on_severity": self.fail_on_severity,
+            "reference_policy": _normalize_reference_policy(self.reference_policy),
         }
 
 
@@ -400,6 +446,7 @@ def inspect_tick_daily_reconciliation(
     config: ReconcileConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or ReconcileConfig()
+    reference_policy = _normalize_reference_policy(cfg.reference_policy)
     session_start = _session_time(cfg.session_start)
     session_end = _session_time(cfg.session_end)
     raw = load_parquet_parts(tick_input)
@@ -535,7 +582,11 @@ def inspect_tick_daily_reconciliation(
             _append_check(
                 checks,
                 check="tick_close_mismatch",
-                severity="warning",
+                severity=_policy_check_severity(
+                    check="tick_close_mismatch",
+                    severity="warning",
+                    reference_policy=reference_policy,
+                ),
                 message="Tick close differs from daily close beyond tolerance.",
                 affected=int(close_bad.sum()),
                 samples=matched.loc[
@@ -560,7 +611,11 @@ def inspect_tick_daily_reconciliation(
             _append_check(
                 checks,
                 check="tick_volume_mismatch",
-                severity="warning",
+                severity=_policy_check_severity(
+                    check="tick_volume_mismatch",
+                    severity="warning",
+                    reference_policy=reference_policy,
+                ),
                 message="Tick cumulative volume differs from daily volume beyond tolerance.",
                 affected=int(volume_bad.sum()),
                 samples=matched.loc[
@@ -588,7 +643,11 @@ def inspect_tick_daily_reconciliation(
             _append_check(
                 checks,
                 check="tick_turnover_mismatch",
-                severity="warning",
+                severity=_policy_check_severity(
+                    check="tick_turnover_mismatch",
+                    severity="warning",
+                    reference_policy=reference_policy,
+                ),
                 message=(
                     "Tick cumulative total_turnover differs from daily total_turnover "
                     "beyond tolerance."
@@ -639,6 +698,7 @@ def inspect_tick_daily_reconciliation(
             "tick_input": str(tick_input),
             "daily_asset_dir": str(daily_asset_dir),
         },
+        "reference_policy": _reference_policy_metadata(reference_policy),
         "tolerance": cfg.to_dict(),
         "reference": reference_meta,
         "summary": summary,
