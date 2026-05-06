@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
 
+from rqdata_tick_data.audit import (
+    AuditRecord,
+    default_audit_path,
+    summarize_audit,
+    write_audit_records,
+)
 from rqdata_tick_data.coverage import (
     STATUS_MISSING,
     VALID_STATUS,
@@ -19,6 +27,7 @@ from rqdata_tick_data.coverage import (
 from rqdata_tick_data.exceptions import DownloadError, ProviderRequestError
 from rqdata_tick_data.fields import DEFAULT_TICK_DEPTH_FIELDS
 from rqdata_tick_data.rq_client import TickDataProvider
+from rqdata_tick_data.runtime import retry_provider_call
 from rqdata_tick_data.schema import normalize_tick_frame
 from rqdata_tick_data.storage import (
     DEFAULT_PARQUET_COMPRESSION,
@@ -161,6 +170,139 @@ def _quota_snapshot(provider: TickDataProvider | None) -> dict[str, Any]:
     return {"available": True, "value": snapshot}
 
 
+def _quota_payload(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not snapshot or not snapshot.get("available"):
+        return None
+    value = snapshot.get("value")
+    return value if isinstance(value, dict) else None
+
+
+def _quota_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _quota_used_limit(snapshot: dict[str, Any] | None) -> tuple[int, int] | None:
+    payload = _quota_payload(snapshot)
+    if payload is None:
+        return None
+    used = _quota_int(payload, "bytes_used", "used_bytes", "traffic_used", "used")
+    limit = _quota_int(payload, "bytes_limit", "limit_bytes", "traffic_limit", "limit")
+    if used is None or limit is None or limit <= 0:
+        return None
+    return used, limit
+
+
+def _quota_used(snapshot: dict[str, Any] | None) -> int | None:
+    values = _quota_used_limit(snapshot)
+    return values[0] if values else None
+
+
+def _quota_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> int | None:
+    before_used = _quota_used(before)
+    after_used = _quota_used(after)
+    if before_used is None or after_used is None:
+        return None
+    return max(0, after_used - before_used)
+
+
+def _estimate_next_quota_delta(
+    successful_deltas: Sequence[int],
+    *,
+    safety_multiplier: float,
+) -> int | None:
+    deltas = [int(value) for value in successful_deltas if int(value) > 0]
+    if not deltas:
+        return None
+    series = pd.Series(deltas, dtype="float64")
+    estimate = max(float(series.quantile(0.90)), float(deltas[-1])) * safety_multiplier
+    return int(estimate)
+
+
+def _quota_guard_decision(
+    snapshot: dict[str, Any],
+    successful_deltas: Sequence[int],
+    *,
+    enabled: bool,
+    stop_ratio: float,
+    safety_multiplier: float,
+) -> dict[str, Any]:
+    values = _quota_used_limit(snapshot)
+    if not enabled or values is None:
+        return {
+            "available": values is not None,
+            "blocked": False,
+            "estimated_next_delta_bytes": None,
+        }
+    used, limit = values
+    estimate = _estimate_next_quota_delta(
+        successful_deltas,
+        safety_multiplier=safety_multiplier,
+    )
+    if estimate is None:
+        return {
+            "available": True,
+            "blocked": False,
+            "bytes_used": used,
+            "bytes_limit": limit,
+            "estimated_next_delta_bytes": None,
+        }
+    threshold = int(limit * stop_ratio)
+    blocked = used + estimate >= threshold
+    return {
+        "available": True,
+        "blocked": blocked,
+        "bytes_used": used,
+        "bytes_limit": limit,
+        "stop_threshold_bytes": threshold,
+        "estimated_next_delta_bytes": estimate,
+    }
+
+
+def _audit_record(
+    *,
+    run_id: str,
+    chunk_id: str,
+    unit: UnitPlan,
+    status: str,
+    rows: int | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    duration_seconds: float | None = None,
+    quota_before: dict[str, Any] | None = None,
+    quota_after: dict[str, Any] | None = None,
+    quota_delta: int | None = None,
+    attempts: int | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> AuditRecord:
+    return AuditRecord(
+        run_id=run_id,
+        chunk_id=chunk_id,
+        trade_date=unit.trade_date,
+        order_book_id=unit.order_book_id,
+        status=status,
+        part_path=str(unit.part_path),
+        rows=rows,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+        quota_before_bytes_used=_quota_used(quota_before),
+        quota_after_bytes_used=_quota_used(quota_after),
+        quota_delta_bytes=quota_delta,
+        attempts=attempts,
+        error_type=error_type,
+        error_message=error_message,
+    )
+
+
 def _storage_settings(
     *,
     raw_layout: str,
@@ -196,6 +338,7 @@ def _base_metadata(
     time_slice: str | None,
 ) -> dict[str, Any]:
     return {
+        "run_id": uuid.uuid4().hex,
         "kind": kind,
         "provider": "rqdata",
         "market": "hk",
@@ -225,6 +368,11 @@ def _base_metadata(
         "invalid_units": [],
         "empty_units": [],
         "failed_units": [],
+        "quota_blocked_batches": [],
+        "quota_blocked_units": [],
+        "audit_path": None,
+        "audit_status_counts": {},
+        "quota_guard": {},
         "rows": 0,
     }
 
@@ -331,6 +479,13 @@ def _download_symbol_date_tick_depth(
     calendar_source: str,
     adjust_type: str,
     time_slice: str | None,
+    retry_max_attempts: int,
+    retry_backoff_seconds: float,
+    retry_max_backoff_seconds: float,
+    quota_guard_enabled: bool,
+    quota_stop_ratio: float,
+    quota_safety_multiplier: float,
+    audit_output: str | Path | None,
 ) -> dict[str, Any]:
     root = Path(output_root)
     units = build_symbol_date_plan(symbols, start_date, end_date, root, trade_dates=trade_dates)
@@ -348,6 +503,16 @@ def _download_symbol_date_tick_depth(
         adjust_type=adjust_type,
         time_slice=time_slice,
     )
+    run_id = str(metadata["run_id"])
+    audit_records: list[AuditRecord] = []
+    audit_file = Path(audit_output) if audit_output else default_audit_path(root, metadata_kind)
+    metadata["audit_path"] = str(audit_file)
+    metadata["quota_guard"] = {
+        "enabled": quota_guard_enabled,
+        "stop_ratio": quota_stop_ratio,
+        "safety_multiplier": quota_safety_multiplier,
+        "available": False,
+    }
     metadata["planned_units"] = [_unit_info(unit) for unit in units]
 
     coverage_rows = scan_raw_coverage(root, requested_fields=fields) if resume else []
@@ -365,6 +530,16 @@ def _download_symbol_date_tick_depth(
                         validation_status=VALID_STATUS,
                         existing_file_path=valid.get("file_path"),
                         row_count=valid.get("row_count", 0),
+                    )
+                )
+                audit_records.append(
+                    _audit_record(
+                        run_id=run_id,
+                        chunk_id=f"{unit.trade_date}:resume",
+                        unit=unit,
+                        status="skipped_existing",
+                        rows=int(valid.get("row_count") or 0),
+                        attempts=0,
                     )
                 )
                 continue
@@ -403,6 +578,7 @@ def _download_symbol_date_tick_depth(
     metadata["dry_run"] = dry_run
 
     if dry_run:
+        metadata["audit_status_counts"] = summarize_audit(audit_records)
         return metadata
     if provider is None:
         raise DownloadError("A provider is required unless dry_run=True.")
@@ -410,50 +586,172 @@ def _download_symbol_date_tick_depth(
     metadata["quota_before"] = _quota_snapshot(provider)
     metadata_file = metadata_path(root, metadata_kind)
     writer = storage["parquet"]
+    successful_quota_deltas: list[int] = []
 
     try:
         for batch in provider_batches:
             batch_info = _provider_batch_info(batch)
+            chunk_id = f"{batch.trade_date}:{batch.batch_number:04d}"
+            quota_before = _quota_snapshot(provider)
+            guard = _quota_guard_decision(
+                quota_before,
+                successful_quota_deltas,
+                enabled=quota_guard_enabled,
+                stop_ratio=quota_stop_ratio,
+                safety_multiplier=quota_safety_multiplier,
+            )
+            metadata["quota_guard"]["available"] = bool(
+                metadata["quota_guard"].get("available") or guard.get("available")
+            )
+            batch_info["quota_before"] = quota_before
+            batch_info["quota_guard"] = guard
+            if guard["blocked"]:
+                batch_info["category"] = "quota_guard"
+                batch_info["error"] = "quota guard blocked provider request"
+                metadata["quota_blocked_batches"].append(batch_info)
+                for unit in batch.units:
+                    info = _unit_info(
+                        unit,
+                        category="quota_guard",
+                        estimated_next_delta_bytes=guard.get("estimated_next_delta_bytes"),
+                    )
+                    metadata["quota_blocked_units"].append(info)
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status="quota_blocked",
+                            quota_before=quota_before,
+                            error_type="quota_guard",
+                            error_message="quota guard blocked provider request",
+                        )
+                    )
+                continue
+
+            started_at = utc_now_iso()
+            started_clock = perf_counter()
             try:
-                raw = provider.get_price(
-                    order_book_ids=batch.symbols,
-                    start_date=batch.trade_date,
-                    end_date=batch.trade_date,
-                    fields=fields,
-                    adjust_type=adjust_type,
-                    time_slice=time_slice,
+                batch_symbols = batch.symbols
+                batch_trade_date = batch.trade_date
+
+                def fetch_batch(
+                    symbols: Sequence[str] = batch_symbols,
+                    trade_date: str = batch_trade_date,
+                ) -> pd.DataFrame:
+                    return provider.get_price(
+                        order_book_ids=symbols,
+                        start_date=trade_date,
+                        end_date=trade_date,
+                        fields=fields,
+                        adjust_type=adjust_type,
+                        time_slice=time_slice,
+                    )
+
+                result = retry_provider_call(
+                    "get_price",
+                    fetch_batch,
+                    max_attempts=retry_max_attempts,
+                    backoff_seconds=retry_backoff_seconds,
+                    max_backoff_seconds=retry_max_backoff_seconds,
                 )
+                raw = result.value
+                quota_after = _quota_snapshot(provider)
+                quota_delta = _quota_delta(quota_before, quota_after)
+                if quota_delta:
+                    successful_quota_deltas.append(quota_delta)
                 normalized = normalize_tick_frame(raw, fields)
                 batch_rows = 0
                 batch_columns = list(normalized.columns)
+                finished_at = utc_now_iso()
+                duration_seconds = round(perf_counter() - started_clock, 6)
                 for unit in batch.units:
                     unit_frame = _filter_unit_frame(normalized, unit)
                     atomic_write_parquet(unit_frame, unit.part_path, **writer)
                     row_count = int(len(unit_frame))
                     batch_rows += row_count
+                    status = "written"
                     if row_count == 0:
+                        status = "empty_remote"
                         metadata["empty_units"].append(
                             _unit_info(unit, reason="provider returned no rows")
                         )
                     metadata["completed_units"].append(
-                        _unit_info(unit, rows=row_count, columns=list(unit_frame.columns))
+                        _unit_info(
+                            unit,
+                            rows=row_count,
+                            columns=list(unit_frame.columns),
+                            attempts=result.attempts,
+                            quota_delta_bytes=quota_delta,
+                        )
+                    )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status=status,
+                            rows=row_count,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            duration_seconds=duration_seconds,
+                            quota_before=quota_before,
+                            quota_after=quota_after,
+                            quota_delta=quota_delta,
+                            attempts=result.attempts,
+                        )
                     )
                 batch_info["rows"] = batch_rows
                 batch_info["columns"] = batch_columns
+                batch_info["attempts"] = result.attempts
+                batch_info["quota_after"] = quota_after
+                batch_info["quota_delta_bytes"] = quota_delta
                 metadata["rows"] += batch_rows
                 metadata["completed_batches"].append(batch_info)
             except Exception as exc:
                 category = getattr(exc, "category", "download_error")
-                failed_batch = {**batch_info, "category": category, "error": str(exc)}
+                quota_after = _quota_snapshot(provider)
+                quota_delta = _quota_delta(quota_before, quota_after)
+                failed_batch = {
+                    **batch_info,
+                    "category": category,
+                    "error": str(exc),
+                    "quota_after": quota_after,
+                    "quota_delta_bytes": quota_delta,
+                }
                 metadata["failed_batches"].append(failed_batch)
                 for unit in batch.units:
-                    metadata["failed_units"].append(
-                        _unit_info(unit, category=category, error=str(exc))
+                    if category == "quota":
+                        metadata["quota_blocked_units"].append(
+                            _unit_info(unit, category=category, error=str(exc))
+                        )
+                    else:
+                        metadata["failed_units"].append(
+                            _unit_info(unit, category=category, error=str(exc))
+                        )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status="quota_blocked" if category == "quota" else "failed",
+                            started_at=started_at,
+                            finished_at=utc_now_iso(),
+                            duration_seconds=round(perf_counter() - started_clock, 6),
+                            quota_before=quota_before,
+                            quota_after=quota_after,
+                            quota_delta=quota_delta,
+                            error_type=str(category),
+                            error_message=str(exc),
+                        )
                     )
-                if not continue_on_error:
+                if category == "quota" or not continue_on_error:
                     raise
     finally:
         metadata["quota_after"] = _quota_snapshot(provider)
+        metadata["audit_status_counts"] = summarize_audit(audit_records)
+        if audit_records:
+            write_audit_records(audit_file, audit_records)
         write_json(metadata_file, metadata)
         metadata["metadata_path"] = str(metadata_file)
 
@@ -504,6 +802,13 @@ def _download_batch_tick_depth(
     calendar_source: str,
     adjust_type: str,
     time_slice: str | None,
+    retry_max_attempts: int,
+    retry_backoff_seconds: float,
+    retry_max_backoff_seconds: float,
+    quota_guard_enabled: bool,
+    quota_stop_ratio: float,
+    quota_safety_multiplier: float,
+    audit_output: str | Path | None,
 ) -> dict[str, Any]:
     root = Path(output_root)
     plans = build_batch_plan(
@@ -528,6 +833,16 @@ def _download_batch_tick_depth(
         adjust_type=adjust_type,
         time_slice=time_slice,
     )
+    run_id = str(metadata["run_id"])
+    audit_records: list[AuditRecord] = []
+    audit_file = Path(audit_output) if audit_output else default_audit_path(root, metadata_kind)
+    metadata["audit_path"] = str(audit_file)
+    metadata["quota_guard"] = {
+        "enabled": quota_guard_enabled,
+        "stop_ratio": quota_stop_ratio,
+        "safety_multiplier": quota_safety_multiplier,
+        "available": False,
+    }
     metadata["planned_units"] = [
         {
             "trade_date": plan.trade_date,
@@ -589,6 +904,16 @@ def _download_batch_tick_depth(
                             "row_count": row.get("row_count", 0),
                         }
                     )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=f"{plan.trade_date}:{plan.batch_number:04d}:resume",
+                            unit=UnitPlan(plan.trade_date, symbol, plan.part_path),
+                            status="skipped_existing",
+                            rows=int(row.get("row_count") or 0),
+                            attempts=0,
+                        )
+                    )
                 continue
             for symbol in plan.symbols:
                 invalid_row = next(
@@ -622,6 +947,7 @@ def _download_batch_tick_depth(
             }
             for plan in plans_to_download
         ]
+        metadata["audit_status_counts"] = summarize_audit(audit_records)
         return metadata
     if provider is None:
         raise DownloadError("A provider is required unless dry_run=True.")
@@ -629,6 +955,7 @@ def _download_batch_tick_depth(
     metadata["quota_before"] = _quota_snapshot(provider)
     metadata_file = metadata_path(root, metadata_kind)
     writer = storage["parquet"]
+    successful_quota_deltas: list[int] = []
 
     try:
         for plan in plans_to_download:
@@ -638,28 +965,98 @@ def _download_batch_tick_depth(
                 "symbols": list(plan.symbols),
                 "part_path": str(plan.part_path),
             }
+            chunk_id = f"{plan.trade_date}:{plan.batch_number:04d}"
+            quota_before = _quota_snapshot(provider)
+            guard = _quota_guard_decision(
+                quota_before,
+                successful_quota_deltas,
+                enabled=quota_guard_enabled,
+                stop_ratio=quota_stop_ratio,
+                safety_multiplier=quota_safety_multiplier,
+            )
+            metadata["quota_guard"]["available"] = bool(
+                metadata["quota_guard"].get("available") or guard.get("available")
+            )
+            batch_info["quota_before"] = quota_before
+            batch_info["quota_guard"] = guard
+            if guard["blocked"]:
+                batch_info["category"] = "quota_guard"
+                batch_info["error"] = "quota guard blocked provider request"
+                metadata["quota_blocked_batches"].append(batch_info)
+                for symbol in plan.symbols:
+                    unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
+                    metadata["quota_blocked_units"].append(
+                        _unit_info(
+                            unit,
+                            category="quota_guard",
+                            estimated_next_delta_bytes=guard.get("estimated_next_delta_bytes"),
+                        )
+                    )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status="quota_blocked",
+                            quota_before=quota_before,
+                            error_type="quota_guard",
+                            error_message="quota guard blocked provider request",
+                        )
+                    )
+                continue
+
+            started_at = utc_now_iso()
+            started_clock = perf_counter()
             try:
-                raw = provider.get_price(
-                    order_book_ids=plan.symbols,
-                    start_date=plan.trade_date,
-                    end_date=plan.trade_date,
-                    fields=fields,
-                    adjust_type=adjust_type,
-                    time_slice=time_slice,
+                plan_symbols = plan.symbols
+                plan_trade_date = plan.trade_date
+
+                def fetch_plan(
+                    symbols: Sequence[str] = plan_symbols,
+                    trade_date: str = plan_trade_date,
+                ) -> pd.DataFrame:
+                    return provider.get_price(
+                        order_book_ids=symbols,
+                        start_date=trade_date,
+                        end_date=trade_date,
+                        fields=fields,
+                        adjust_type=adjust_type,
+                        time_slice=time_slice,
+                    )
+
+                result = retry_provider_call(
+                    "get_price",
+                    fetch_plan,
+                    max_attempts=retry_max_attempts,
+                    backoff_seconds=retry_backoff_seconds,
+                    max_backoff_seconds=retry_max_backoff_seconds,
                 )
+                raw = result.value
+                quota_after = _quota_snapshot(provider)
+                quota_delta = _quota_delta(quota_before, quota_after)
+                if quota_delta:
+                    successful_quota_deltas.append(quota_delta)
                 normalized = normalize_tick_frame(raw, fields)
                 atomic_write_parquet(normalized, plan.part_path, **writer)
+                finished_at = utc_now_iso()
+                duration_seconds = round(perf_counter() - started_clock, 6)
                 batch_info["rows"] = int(len(normalized))
                 batch_info["columns"] = list(normalized.columns)
+                batch_info["attempts"] = result.attempts
+                batch_info["quota_after"] = quota_after
+                batch_info["quota_delta_bytes"] = quota_delta
                 metadata["rows"] += int(len(normalized))
                 metadata["completed_batches"].append(batch_info)
                 for symbol in plan.symbols:
+                    unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
                     unit_frame = _filter_unit_frame(
                         normalized,
-                        UnitPlan(plan.trade_date, symbol, plan.part_path),
+                        unit,
                     )
                     unit_rows = int(len(unit_frame))
+                    status = "written"
                     if unit_rows == 0:
+                        status = "empty_remote"
                         metadata["empty_units"].append(
                             {
                                 "trade_date": plan.trade_date,
@@ -675,26 +1072,71 @@ def _download_batch_tick_depth(
                             "part_path": str(plan.part_path),
                             "rows": unit_rows,
                             "columns": list(unit_frame.columns),
+                            "attempts": result.attempts,
+                            "quota_delta_bytes": quota_delta,
                         }
+                    )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status=status,
+                            rows=unit_rows,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            duration_seconds=duration_seconds,
+                            quota_before=quota_before,
+                            quota_after=quota_after,
+                            quota_delta=quota_delta,
+                            attempts=result.attempts,
+                        )
                     )
             except Exception as exc:
                 category = getattr(exc, "category", "download_error")
-                failed_info = {**batch_info, "category": category, "error": str(exc)}
+                quota_after = _quota_snapshot(provider)
+                quota_delta = _quota_delta(quota_before, quota_after)
+                failed_info = {
+                    **batch_info,
+                    "category": category,
+                    "error": str(exc),
+                    "quota_after": quota_after,
+                    "quota_delta_bytes": quota_delta,
+                }
                 metadata["failed_batches"].append(failed_info)
                 for symbol in plan.symbols:
-                    metadata["failed_units"].append(
-                        {
-                            "trade_date": plan.trade_date,
-                            "order_book_id": symbol,
-                            "part_path": str(plan.part_path),
-                            "category": category,
-                            "error": str(exc),
-                        }
+                    unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
+                    if category == "quota":
+                        metadata["quota_blocked_units"].append(
+                            _unit_info(unit, category=category, error=str(exc))
+                        )
+                    else:
+                        metadata["failed_units"].append(
+                            _unit_info(unit, category=category, error=str(exc))
+                        )
+                    audit_records.append(
+                        _audit_record(
+                            run_id=run_id,
+                            chunk_id=chunk_id,
+                            unit=unit,
+                            status="quota_blocked" if category == "quota" else "failed",
+                            started_at=started_at,
+                            finished_at=utc_now_iso(),
+                            duration_seconds=round(perf_counter() - started_clock, 6),
+                            quota_before=quota_before,
+                            quota_after=quota_after,
+                            quota_delta=quota_delta,
+                            error_type=str(category),
+                            error_message=str(exc),
+                        )
                     )
-                if not continue_on_error:
+                if category == "quota" or not continue_on_error:
                     raise
     finally:
         metadata["quota_after"] = _quota_snapshot(provider)
+        metadata["audit_status_counts"] = summarize_audit(audit_records)
+        if audit_records:
+            write_audit_records(audit_file, audit_records)
         write_json(metadata_file, metadata)
         metadata["metadata_path"] = str(metadata_file)
 
@@ -723,9 +1165,20 @@ def download_tick_depth(
     parquet_engine: str = DEFAULT_PARQUET_ENGINE,
     parquet_compression: str | None = DEFAULT_PARQUET_COMPRESSION,
     parquet_compression_level: int | None = None,
+    retry_max_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+    retry_max_backoff_seconds: float = 60.0,
+    quota_guard: bool = True,
+    quota_stop_ratio: float = 0.95,
+    quota_safety_multiplier: float = 1.2,
+    audit_output: str | Path | None = None,
 ) -> dict[str, Any]:
     """Download tick-depth snapshots into parquet parts and write run metadata."""
     selected_fields = list(fields or DEFAULT_TICK_DEPTH_FIELDS)
+    if quota_stop_ratio <= 0 or quota_stop_ratio > 1:
+        raise ValueError("quota_stop_ratio must be in (0, 1].")
+    if quota_safety_multiplier <= 0:
+        raise ValueError("quota_safety_multiplier must be positive.")
     layout = normalize_raw_layout(raw_layout)
     normalized_calendar = normalize_calendar(calendar)
     trade_dates, calendar_source = _resolve_trade_dates(
@@ -758,6 +1211,13 @@ def download_tick_depth(
             calendar_source=calendar_source,
             adjust_type=adjust_type,
             time_slice=time_slice,
+            retry_max_attempts=retry_max_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+            retry_max_backoff_seconds=retry_max_backoff_seconds,
+            quota_guard_enabled=quota_guard,
+            quota_stop_ratio=quota_stop_ratio,
+            quota_safety_multiplier=quota_safety_multiplier,
+            audit_output=audit_output,
         )
     return _download_symbol_date_tick_depth(
         provider=provider,
@@ -776,6 +1236,13 @@ def download_tick_depth(
         calendar_source=calendar_source,
         adjust_type=adjust_type,
         time_slice=time_slice,
+        retry_max_attempts=retry_max_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        retry_max_backoff_seconds=retry_max_backoff_seconds,
+        quota_guard_enabled=quota_guard,
+        quota_stop_ratio=quota_stop_ratio,
+        quota_safety_multiplier=quota_safety_multiplier,
+        audit_output=audit_output,
     )
 
 

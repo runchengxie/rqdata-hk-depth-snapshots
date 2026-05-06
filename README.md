@@ -69,6 +69,32 @@ rqdata-tick download \
   --resume
 ```
 
+下载命令会为每次 run 生成 chunk/unit 级审计表，默认写入：
+
+```text
+<output>/audit/download_<timestamp>_<run>.csv
+```
+
+审计表按 `trade_date + order_book_id` 记录 `written`、`skipped_existing`、`empty_remote`、`failed`、`quota_blocked` 等状态，并记录可用时的 `quota_before`、`quota_after` 和 `quota_delta`。`download_*.json` metadata 会引用 audit 路径并汇总各状态数量。
+
+线上大规模下载建议打开默认 quota guard，并为 retry/backoff 留出配置：
+
+```bash
+rqdata-tick download \
+  --symbols-file symbols_core.txt \
+  --start-date 20250401 \
+  --end-date 20260506 \
+  --out artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --batch-size 5 \
+  --retry-max-attempts 3 \
+  --retry-backoff-seconds 2 \
+  --quota-stop-ratio 0.95 \
+  --quota-safety-multiplier 1.2 \
+  --resume
+```
+
+当最近 chunk 的实测 quota delta 推断下一个 chunk 可能接近当日阈值时，系统会跳过 provider 请求并把对应 unit 标记为 `quota_blocked`，方便下一天直接续跑。
+
 `--symbols` 和 `--symbols-file` 会把 `700`、`00700.HK`、`00700.XHKG` 统一规范成 RQData 的 `00700.XHKG`。符号文件支持 TXT、CSV 和 Parquet；表格文件会优先读取 `order_book_id`、`symbol`、`stock_ticker` 或 `ts_code` 列，方便复用 cross 项目的 universe/symbol 产物。
 
 真实 provider 下载时，默认使用 RQData 港股交易日历，只对交易日发请求，避免周末和休市日空请求消耗 quota。离线预演如果不想初始化 provider，可以显式使用自然日：
@@ -131,6 +157,18 @@ rqdata-tick health \
   --fail-on-severity warning
 ```
 
+Tick 与 cross 日频资产对账示例：
+
+```bash
+rqdata-tick reconcile-daily \
+  --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --daily-asset-dir /home/richard/code/cross-sectional-hk-tree/artifacts/assets/rqdata/hk/daily/hk_all_2000_20260504_daily_clean_refetched_latest \
+  --out artifacts/reports/tick_daily_reconcile_core.json \
+  --fail-on-severity warning
+```
+
+`reconcile-daily` 会只读 raw tick 和外部 daily clean asset，不会复制或修改 cross 日频资产，也不会覆盖 raw tick。报告会检查 tick 聚合出的 close、累计 volume、累计 total_turnover 是否能和日频数据对上，并检查 OHLC 边界、盘口档位规则和港股 session 时间异常。
+
 日度数据聚合示例：
 
 ```bash
@@ -152,6 +190,8 @@ rqdata-tick emit-asset \
   --source artifacts/cache/rqdata/hk_tick_depth_daily/hk_probe/data.parquet \
   --output artifacts/assets/rqdata/hk/tick_depth_daily/hk_probe
 ```
+
+raw 和 daily asset 输出都会包含 `manifest.yml`、`meta.json`、`symbols.txt` 和 `fields.txt`，便于后续脚本稳定引用。
 
 ## 下游应用建议
 

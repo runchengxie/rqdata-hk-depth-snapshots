@@ -106,6 +106,8 @@ disk_per_symbol_period ~= 134.5 MB
 
 这是下载前规划用的粗估，不是账单承诺。真实执行应以每个 chunk 的 `metadata.json` 里的 `quota_before` / `quota_after` 为准，并持续更新估算。
 
+当前下载器还会写 chunk/unit 级 audit csv。以后扩样本时，优先用 audit 表中的 `quota_delta_bytes`、`status`、`rows` 和 `attempts` 更新估算，而不是只看单个 metadata 汇总。
+
 ## 推荐下载策略
 
 1. 先下载核心流动性标的，不先跑全市场。
@@ -148,10 +150,24 @@ UV_CACHE_DIR=/tmp/uv-cache uv run --extra rqdata rqdata-tick download \
   --start-date 20250401 \
   --end-date 20260506 \
   --out artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
-  --batch-size 10 \
+  --batch-size 5 \
+  --retry-max-attempts 3 \
+  --retry-backoff-seconds 2 \
+  --quota-stop-ratio 0.95 \
+  --quota-safety-multiplier 1.2 \
   --resume \
   --continue-on-error
 ```
+
+下载过程中需要保留：
+
+| 产物 | 用途 |
+| --- | --- |
+| `meta/download_*.json` | run 级配置、交易日、字段、quota 总览、audit 路径 |
+| `audit/download_*.csv` | unit/chunk 级 written、skipped、empty、failed、quota_blocked 审计 |
+| `parts/trade_date=.../*.parquet` | immutable raw tick 原始分片 |
+
+如果出现 `quota_blocked`，不要删除输出目录。第二天同一个命令带 `--resume` 继续跑即可。
 
 健康检查：
 
@@ -169,6 +185,67 @@ UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick aggregate-daily \
   --output artifacts/cache/rqdata/hk_tick_depth_daily/core_20250401_20260506/data.parquet
 ```
 
+Tick vs cross 日频对账：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick reconcile-daily \
+  --tick-input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --daily-asset-dir /home/richard/code/cross-sectional-hk-tree/artifacts/assets/rqdata/hk/daily/hk_all_2000_20260504_daily_clean_refetched_latest \
+  --out artifacts/reports/tick_daily_reconcile_core.json \
+  --fail-on-severity warning
+```
+
+对账报告重点看：
+
+| check | 决策含义 |
+| --- | --- |
+| `daily_active_missing_tick` | 日频显示有成交但 tick 缺失，应优先确认权限、停牌和下载覆盖 |
+| `tick_close_mismatch` | 最后有效 tick 的 `last` 和日频 close 对不上，需检查复权口径和时间窗口 |
+| `tick_volume_mismatch` | tick 累计 volume 和日频 volume 对不上，需确认累计字段语义 |
+| `tick_turnover_mismatch` | tick 累计成交额和日频成交额对不上，需确认币种/单位/字段 |
+| `quote_ladder_invalid` | 十档盘口出现交叉、档位顺序异常或负盘口量 |
+| `session_time_outlier` | timestamp 超出默认 09:00-16:30 宽窗口 |
+
+### 2026-05-06 新流程 smoke
+
+命令：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run --extra rqdata rqdata-tick download \
+  --symbols 00001.XHKG \
+  --start-date 20250401 \
+  --end-date 20250401 \
+  --out /tmp/rqdata_tick_apply_smoke_00001_20250401 \
+  --fields "open high low last volume total_turnover a1 a1_v b1 b1_v" \
+  --batch-size 1 \
+  --retry-max-attempts 2 \
+  --retry-backoff-seconds 1 \
+  --resume
+```
+
+结果：
+
+| 项 | 数值 |
+| --- | ---: |
+| rows | 2398 |
+| audit_status_counts.written | 1 |
+| audit_status_counts.quota_blocked | 0 |
+| quota_guard.available | true |
+| quota_delta_bytes | 0 |
+
+说明：本次 provider `get_quota()` 在请求前后返回的 `bytes_used` 相同，因此 audit 中的 `quota_delta_bytes` 为 0。后续大批量下载仍应保留 `quota_before/quota_after`，但估算不要只依赖单个小请求的实时 delta。
+
+随后用 cross daily clean asset 跑 `reconcile-daily --fail-on-severity none`：
+
+| 项 | 数值 |
+| --- | ---: |
+| matched_symbol_days | 1 |
+| unmatched_symbol_count | 0 |
+| quality_verdict.overall_severity | warning |
+| warning | `tick_close_mismatch` |
+
+样本中 tick raw close 为 `44.5`，cross daily clean close 为 `42.417416515886266`。这说明当前 cross daily clean reference 很可能不是 raw tick 同口径价格，对账命令能正确把这个差异暴露出来。正式用作门禁前，需要决定 daily reference 使用 raw 口径还是 adjusted/clean 口径。
+
 ## 后续需要更新的现场数字
 
 每次扩大下载后，更新这些字段：
@@ -176,9 +253,10 @@ UV_CACHE_DIR=/tmp/uv-cache uv run rqdata-tick aggregate-daily \
 | 字段 | 说明 |
 | --- | --- |
 | quota_before / quota_after | 从下载 metadata 读取 |
+| audit_status_counts | written、skipped_existing、empty_remote、failed、quota_blocked 数量 |
 | rows | 下载 metadata 的总行数 |
 | empty_units | 区分停牌、未上市、无权限或无数据 |
 | parquet_total_bytes | raw parts 总大小 |
 | health status | 是否有重复 timestamp、盘口交叉、累计成交回落 |
+| reconcile verdict | tick close、volume、turnover 是否能和 cross 日频资产对上 |
 | aggregate rows | 最终可用于低频研究的 symbol-date 行数 |
-

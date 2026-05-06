@@ -17,6 +17,7 @@ from rqdata_tick_data.downloader import (
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.health import format_health_summary, write_health_report
 from rqdata_tick_data.quota import augment_quota_payload, format_quota_pretty
+from rqdata_tick_data.reconcile import ReconcileConfig, write_reconciliation_report
 from rqdata_tick_data.rq_client import RQDataClient, TickDataProvider
 from rqdata_tick_data.symbols import parse_symbols
 
@@ -66,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--continue-on-error", action="store_true")
     download.add_argument("--dry-run", action="store_true")
     download.add_argument("--fake-provider", action="store_true")
+    download.add_argument("--retry-max-attempts", type=int, default=1)
+    download.add_argument("--retry-backoff-seconds", type=float, default=0.0)
+    download.add_argument("--retry-max-backoff-seconds", type=float, default=60.0)
+    download.add_argument("--quota-guard", dest="quota_guard", action="store_true", default=True)
+    download.add_argument("--no-quota-guard", dest="quota_guard", action="store_false")
+    download.add_argument("--quota-stop-ratio", type=float, default=0.95)
+    download.add_argument("--quota-safety-multiplier", type=float, default=1.2)
+    download.add_argument("--audit-output")
 
     health = subparsers.add_parser("health", help="Inspect raw parquet cache health.")
     health.add_argument("--input", required=True)
@@ -89,6 +98,28 @@ def build_parser() -> argparse.ArgumentParser:
     quota = subparsers.add_parser("quota", help="Show RQData quota usage.")
     quota.add_argument("--pretty", action="store_true")
     quota.add_argument("--fake-provider", action="store_true")
+
+    reconcile = subparsers.add_parser(
+        "reconcile-daily",
+        help="Reconcile raw ticks with an external daily clean asset.",
+    )
+    reconcile.add_argument("--tick-input", required=True)
+    reconcile.add_argument("--daily-asset-dir", required=True)
+    reconcile.add_argument("--out", required=True)
+    reconcile.add_argument(
+        "--fail-on-severity",
+        choices=["none", "info", "warning", "error"],
+        default="error",
+    )
+    reconcile.add_argument("--price-rtol", type=float, default=1e-4)
+    reconcile.add_argument("--price-atol", type=float, default=1e-4)
+    reconcile.add_argument("--volume-rtol", type=float, default=1e-4)
+    reconcile.add_argument("--volume-atol", type=float, default=1.0)
+    reconcile.add_argument("--turnover-rtol", type=float, default=1e-4)
+    reconcile.add_argument("--turnover-atol", type=float, default=1.0)
+    reconcile.add_argument("--session-start", default="09:00")
+    reconcile.add_argument("--session-end", default="16:30")
+    reconcile.add_argument("--sample-limit", type=int, default=20)
 
     return parser
 
@@ -135,6 +166,13 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
                 parquet_engine=args.parquet_engine,
                 parquet_compression=args.parquet_compression,
                 parquet_compression_level=args.parquet_compression_level,
+                retry_max_attempts=args.retry_max_attempts,
+                retry_backoff_seconds=args.retry_backoff_seconds,
+                retry_max_backoff_seconds=args.retry_max_backoff_seconds,
+                quota_guard=args.quota_guard,
+                quota_stop_ratio=args.quota_stop_ratio,
+                quota_safety_multiplier=args.quota_safety_multiplier,
+                audit_output=args.audit_output,
             )
             _print_json(result)
             return 0
@@ -173,6 +211,38 @@ def main(argv: list[str] | None = None, provider: TickDataProvider | None = None
             else:
                 print(json.dumps(payload, indent=2, sort_keys=True, default=str))
             return 0
+
+        if args.command == "reconcile-daily":
+            config = ReconcileConfig(
+                price_rtol=args.price_rtol,
+                price_atol=args.price_atol,
+                volume_rtol=args.volume_rtol,
+                volume_atol=args.volume_atol,
+                turnover_rtol=args.turnover_rtol,
+                turnover_atol=args.turnover_atol,
+                session_start=args.session_start,
+                session_end=args.session_end,
+                sample_limit=args.sample_limit,
+                fail_on_severity=args.fail_on_severity,
+            )
+            report = write_reconciliation_report(
+                args.tick_input,
+                args.daily_asset_dir,
+                args.out,
+                config=config,
+            )
+            _print_json(
+                {
+                    "report_path": report["report_path"],
+                    "summary": report["summary"],
+                    "quality_verdict": report["quality_verdict"],
+                    "status": report["status"],
+                }
+            )
+            verdict = report.get("quality_verdict")
+            if isinstance(verdict, dict) and verdict.get("gate_triggered"):
+                return 2
+            return 0 if report["status"] == "pass" else 1
 
     except Exception as exc:
         code, message = provider_error_to_exit(exc)

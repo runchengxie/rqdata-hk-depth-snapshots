@@ -143,5 +143,13 @@ def emit_daily_asset(source_path: str | Path, output_root: str | Path) -> dict[s
     if not manifest["files"]:
         manifest["files"] = [str(path.relative_to(output)) for path in files]
     write_yaml(output / "manifest.yml", manifest)
+    (output / "symbols.txt").write_text(
+        "\n".join(symbols) + ("\n" if symbols else ""),
+        encoding="utf-8",
+    )
+    (output / "fields.txt").write_text(
+        "\n".join(fields) + ("\n" if fields else ""),
+        encoding="utf-8",
+    )
     write_json(output / "meta.json", manifest)
     return {"output_root": str(output), "manifest_path": str(output / "manifest.yml"), **manifest}

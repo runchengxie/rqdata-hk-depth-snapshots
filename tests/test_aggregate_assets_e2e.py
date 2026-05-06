@@ -63,6 +63,10 @@ def test_offline_end_to_end_and_assets(tmp_path) -> None:
     assert daily_asset["row_count"] == 2
     assert (tmp_path / "asset_raw" / "manifest.yml").exists()
     assert (tmp_path / "asset_daily" / "manifest.yml").exists()
+    assert (tmp_path / "asset_raw" / "symbols.txt").exists()
+    assert (tmp_path / "asset_raw" / "fields.txt").exists()
+    assert (tmp_path / "asset_daily" / "symbols.txt").exists()
+    assert (tmp_path / "asset_daily" / "fields.txt").exists()
 
 
 def test_legacy_batch_and_symbol_date_layouts_remain_compatible(tmp_path) -> None:

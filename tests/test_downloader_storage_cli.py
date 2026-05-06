@@ -14,6 +14,7 @@ from rqdata_tick_data.storage import (
     batch_part_path,
     decode_order_book_id,
     encode_order_book_id,
+    load_parquet_parts,
     metadata_path,
     symbol_date_part_path,
 )
@@ -77,6 +78,76 @@ class EmptyProvider(FakeProvider):
         time_slice=None,
     ):
         return pd.DataFrame()
+
+
+class IncrementingQuotaProvider(CountingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bytes_used = 100
+
+    def quota_snapshot(self) -> dict[str, object]:
+        return {
+            "bytes_used": self.bytes_used,
+            "bytes_limit": 1_000,
+            "bytes_remaining": 1_000 - self.bytes_used,
+        }
+
+    def get_price(  # noqa: ANN001
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
+        frame = super().get_price(
+            order_book_ids,
+            start_date,
+            end_date,
+            fields,
+            adjust_type,
+            time_slice,
+        )
+        self.bytes_used += 800
+        return frame
+
+
+class FlakyProvider(CountingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failures_remaining = 1
+
+    def get_price(  # noqa: ANN001
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
+        self.calls.append(
+            {
+                "order_book_ids": tuple(order_book_ids),
+                "start_date": start_date,
+                "end_date": end_date,
+                "fields": tuple(fields),
+                "adjust_type": adjust_type,
+                "time_slice": time_slice,
+            }
+        )
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise RuntimeError("temporary provider timeout")
+        return FakeProvider().get_price(
+            order_book_ids,
+            start_date,
+            end_date,
+            fields,
+            adjust_type,
+            time_slice,
+        )
 
 
 def test_batch_path_and_metadata_path(tmp_path) -> None:
@@ -317,6 +388,80 @@ def test_empty_provider_units_are_marked_in_metadata(tmp_path) -> None:
 
     assert result["rows"] == 0
     assert result["empty_units"][0]["order_book_id"] == "00001.XHKG"
+    assert result["audit_status_counts"]["empty_remote"] == 1
+    audit = pd.read_csv(result["audit_path"])
+    assert audit.loc[0, "status"] == "empty_remote"
+
+
+def test_download_writes_audit_for_written_and_resume_skipped_units(tmp_path) -> None:
+    root = tmp_path / "cache"
+    fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
+    first = download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=root,
+        fields=fields,
+        batch_size=1,
+    )
+    second = download_tick_depth(
+        provider=NoCallProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=root,
+        fields=fields,
+        batch_size=1,
+        resume=True,
+    )
+
+    assert first["audit_status_counts"]["written"] == 1
+    assert pd.read_csv(first["audit_path"]).loc[0, "status"] == "written"
+    assert second["audit_status_counts"]["skipped_existing"] == 1
+    assert pd.read_csv(second["audit_path"]).loc[0, "status"] == "skipped_existing"
+
+
+def test_quota_guard_blocks_next_chunk_without_provider_call(tmp_path) -> None:
+    provider = IncrementingQuotaProvider()
+    result = download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG", "00700.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        quota_stop_ratio=0.95,
+        quota_safety_multiplier=1.2,
+    )
+    audit = pd.read_csv(result["audit_path"])
+
+    assert len(provider.calls) == 1
+    assert result["audit_status_counts"]["written"] == 1
+    assert result["audit_status_counts"]["quota_blocked"] == 1
+    assert set(audit["status"]) == {"written", "quota_blocked"}
+    assert len(load_parquet_parts(tmp_path / "cache")) == 4
+
+
+def test_retry_metadata_records_attempts(tmp_path) -> None:
+    provider = FlakyProvider()
+    result = download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        retry_max_attempts=2,
+        retry_backoff_seconds=0,
+    )
+    audit = pd.read_csv(result["audit_path"])
+
+    assert len(provider.calls) == 2
+    assert result["completed_units"][0]["attempts"] == 2
+    assert audit.loc[0, "attempts"] == 2
 
 
 def test_batched_provider_response_writes_symbol_date_parts(tmp_path) -> None:
