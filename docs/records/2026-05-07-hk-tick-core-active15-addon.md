@@ -156,7 +156,7 @@ tick rows by symbol：
 | `06869.XHKG` | 44 | 663,909 |
 | `09992.XHKG` | 44 | 737,535 |
 
-## 配额补用回填到 95%
+## 配额补用回填
 
 在最近窗口验证通过后，继续沿用同一 active15 池向前回填，并用下载器的 quota guard
 将配额控制在 95% 附近。
@@ -226,11 +226,101 @@ quota 记录：
 | 2025-12-11 到 2026-02-27 | 765 | 6,596,465 | 15 | 20251211 到 20260227 | quote pass 765；vwap pass 762 / warning 3；coverage pass 765；tick count pass 765；research true 765；cost model true 765 |
 | 2025-11-24 到 2025-12-10 | 195 | 1,605,800 | 15 | 20251124 到 20251210 | quote pass 195；vwap pass 195；coverage pass 195；tick count pass 195；research true 195；cost model true 195 |
 
+## 追加补用到 99.79%
+
+在 `2025-11-24` 到 `2026-05-06` 连续样本完成后，继续优先补同一 active15 池的
+更早窗口；未再开启次选池，因为首选窗口已经把 quota 用到 99.79%，剩余硬配额只有
+约 2.11MB。
+
+下载策略：
+
+1. 先跑 `2025-11-07` 到 `2025-11-21` 全 active15，`batch-size=2`，
+   `--quota-stop-ratio 0.99`。
+2. quota guard 后，改用 `batch-size=1` 逐日补齐 `2025-11-19`、`2025-11-20`。
+3. 最后用 `batch-size=1` 尝试 `2025-11-21`，`--quota-stop-ratio 0.999`，
+   在 6 个 symbol-days 后停止。
+
+下载结果：
+
+| 步骤 | 日期 | written | quota blocked | raw rows | quota after |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 初次窗口 | 2025-11-07 到 2025-11-21 | 124 | 41 | 1,123,256 | 98.51% |
+| 单日补齐 | 2025-11-19 | 11 | 0 | 75,243 | 98.75% |
+| 单日补齐 | 2025-11-20 | 15 | 0 | 152,527 | 99.25% |
+| 单日尝试 | 2025-11-21 | 6 | 9 | 82,999 | 99.79% |
+
+最终覆盖：
+
+| 项 | 结果 |
+| --- | ---: |
+| output root | `artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121` |
+| raw rows | 1,434,025 |
+| parquet 分片 | 156 |
+| expected symbol-days | 165 |
+| completed symbol-days | 156 |
+| missing symbol-days | 9 |
+| final quota used | 1,071,525,077 bytes / 99.79% |
+| final quota remaining | 2,216,747 bytes / 2.11MB |
+
+缺失单元均在 `2025-11-21`：
+
+```text
+00175.XHKG, 00857.XHKG, 00939.XHKG, 01024.XHKG, 01347.XHKG,
+01378.XHKG, 01398.XHKG, 02628.XHKG, 02899.XHKG
+```
+
+输出记录：
+
+| 类型 | 路径 |
+| --- | --- |
+| initial metadata | `artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/meta/download_20260507_010910.json` |
+| 2025-11-19 patch metadata | `artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/meta/download_20260507_011109.json` |
+| 2025-11-20 patch metadata | `artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/meta/download_20260507_011142.json` |
+| 2025-11-21 patch metadata | `artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/meta/download_20260507_011207.json` |
+| health report | `artifacts/reports/tick_health_core_active15_addon_backfill_20251107_20251121.json` |
+| health unit diagnostics | `artifacts/reports/tick_health_core_active15_addon_backfill_20251107_20251121_units.csv` |
+| daily aggregate | `artifacts/cache/rqdata/hk_tick_depth_daily/core_active15_addon_backfill_20251107_20251121/data.parquet` |
+| daily aggregate metadata | `artifacts/cache/rqdata/hk_tick_depth_daily/core_active15_addon_backfill_20251107_20251121/meta/aggregate_daily.json` |
+
+健康检查：
+
+| 项 | 结果 |
+| --- | --- |
+| status | pass |
+| overall severity | warning |
+| raw rows | 1,434,025 |
+| symbols | 15 |
+| dates | 11 |
+| warnings | `timestamp_non_monotonic_count=1`、`volume_decrease_count=1`、`turnover_decrease_count=1` |
+| failures | 0 |
+| duplicate key | 0 |
+| quote ladder invalid | 0 |
+| negative depth volume | 0 |
+| outside session rows | 0 |
+
+日频聚合：
+
+| 项 | 结果 |
+| --- | ---: |
+| aggregate rows | 156 |
+| source rows | 1,434,025 |
+| date range | 20251107 到 20251121 |
+| completed full dates | 20251107 到 20251120 |
+| partial date | 20251121：6 / 15 symbol-days |
+| `quote_quality_flag` | pass 156 |
+| `vwap_quality_flag` | pass 155 / warning 1 |
+| `coverage_quality_flag` | pass 156 |
+| `tick_count_quality_flag` | pass 156 |
+| `is_usable_for_research` | true 156 |
+| `is_usable_for_cost_model` | true 156 |
+
 ## 结论
 
 这批 add-on 样本比 Round 1 的尾部/empty 样本更适合作为核心池扩展候选。15 个标的
 在最近 44 个交易日全部有 tick 数据，质量门禁通过，且每日聚合全部可用于 research。
 本轮额外把同一池回填到 `2025-11-24`，并补齐 0.95 guard 最初拦下的
-`01378.XHKG` / `2025-12-10`，最终配额停在 94.81%。active15 已覆盖
-`2025-11-24` 到 `2026-05-06` 的连续样本。后续 quota 重置后，可以优先把这 15 个
-标的继续向前补到 `2025-04-01`，或者按相同方法继续筛选下一组 active add-on。
+`01378.XHKG` / `2025-12-10`。随后继续向前补到 `2025-11-07`，最终配额停在
+99.79%。active15 已完整覆盖 `2025-11-07` 到 `2026-05-06`，但 `2025-11-21`
+还有 9 个 symbol-days 因 quota guard 未取；若只使用完整面板，可从 `2025-11-24`
+开始。后续 quota 重置后，可以优先补齐 `2025-11-21` 剩余 9 格，再把这 15 个标的
+继续向前补到 `2025-04-01`，或者按相同方法继续筛选下一组 active add-on。
