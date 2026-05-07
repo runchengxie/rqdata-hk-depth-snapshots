@@ -1,0 +1,18 @@
+# Active HK stock-connect add-on sample selected on 2026-05-07.
+# Basis: active CS instruments, stock_connect not null, excluding Round 1,
+# ranked by 2026-04-01..2026-05-06 daily total_turnover.
+00981.XHKG
+06869.XHKG
+03750.XHKG
+09992.XHKG
+01211.XHKG
+00883.XHKG
+01347.XHKG
+00939.XHKG
+00175.XHKG
+02899.XHKG
+01024.XHKG
+01398.XHKG
+02628.XHKG
+00857.XHKG
+01378.XHKG
