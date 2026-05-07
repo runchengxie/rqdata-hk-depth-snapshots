@@ -21,7 +21,8 @@ rqdata-tick probe \
 
 ## 2. Download
 
-`download` 批量写出 raw tick parquet。新下载默认使用 `symbol-date` raw layout：
+`download` 批量写出 raw tick parquet。新下载默认使用 `symbol-date` raw layout 和
+`zstd` level 3 parquet 压缩：
 
 ```text
 parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
@@ -33,6 +34,8 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 - 使用 `--resume` 保留已完成单元。
 - 使用 `--continue-on-error` 保留失败单元记录。
 - 保留 metadata 和 audit 作为进度记录。
+- 保留 raw tick；日常研究读取 `aggregate-daily` 输出，raw 用于审计、质量门禁和重算。
+- 优先下载核心活跃池；长期 empty remote、退市或无研究用途标的不进入正式池。
 - 对 live provider 分批运行，单批 estimated quota 控制在 `300MB-700MB` 附近。
 
 示例：
@@ -63,6 +66,16 @@ raw cache 是后续 health、aggregation、reconciliation 和 asset emission 的
 meta/download_<timestamp>.json
 audit/download_<timestamp>_<run>.csv
 ```
+
+已有 `snappy` raw cache 可用 `recompress-raw` 迁移到 `zstd` 新目录：
+
+```bash
+rqdata-tick recompress-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
+  --output artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506_zstd3
+```
+
+迁移后先对新目录跑 `health` 和 `aggregate-daily`，确认通过后再归档或替换旧目录。
 
 完整字段见 [数据契约](data-contracts.md)。
 

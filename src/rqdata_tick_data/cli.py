@@ -17,12 +17,14 @@ from rqdata_tick_data.downloader import (
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.health import format_health_summary, write_health_report
 from rqdata_tick_data.quota import augment_quota_payload, format_quota_pretty
+from rqdata_tick_data.recompress import recompress_raw_cache
 from rqdata_tick_data.reconcile import (
     REFERENCE_POLICIES,
     ReconcileConfig,
     write_reconciliation_report,
 )
 from rqdata_tick_data.rq_client import RQDataClient, TickDataProvider
+from rqdata_tick_data.storage import DEFAULT_PARQUET_COMPRESSION
 from rqdata_tick_data.symbols import parse_symbols
 
 
@@ -64,7 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--raw-layout", choices=["symbol-date", "batch"], default="symbol-date")
     download.add_argument("--calendar", choices=["provider", "calendar"], default="provider")
     download.add_argument("--parquet-engine", default="pyarrow")
-    download.add_argument("--compression", dest="parquet_compression", default="snappy")
+    download.add_argument(
+        "--compression",
+        dest="parquet_compression",
+        default=DEFAULT_PARQUET_COMPRESSION,
+    )
     download.add_argument("--compression-level", dest="parquet_compression_level", type=int)
     download.add_argument("--resume", dest="resume", action="store_true", default=True)
     download.add_argument("--no-resume", dest="resume", action="store_false")
@@ -94,6 +100,25 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate.add_argument("--input", required=True)
     aggregate.add_argument("--output", required=True)
     aggregate.add_argument("--meta-output")
+
+    recompress = subparsers.add_parser(
+        "recompress-raw",
+        help="Rewrite raw parquet parts to a new cache with a different compression codec.",
+    )
+    recompress.add_argument("--input", required=True)
+    recompress.add_argument("--output", required=True)
+    recompress.add_argument(
+        "--compression",
+        dest="parquet_compression",
+        default=DEFAULT_PARQUET_COMPRESSION,
+    )
+    recompress.add_argument("--compression-level", dest="parquet_compression_level", type=int)
+    recompress.add_argument("--min-rewrite-bytes", type=int, default=0)
+    recompress.add_argument("--resume", dest="resume", action="store_true", default=True)
+    recompress.add_argument("--no-resume", dest="resume", action="store_false")
+    recompress.add_argument("--continue-on-error", action="store_true")
+    recompress.add_argument("--meta-output")
+    recompress.add_argument("--out-units")
 
     asset = subparsers.add_parser("emit-asset", help="Emit an asset-compatible directory.")
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
@@ -213,6 +238,23 @@ def _handle_aggregate_daily(args: argparse.Namespace, provider: TickDataProvider
     return 0
 
 
+def _handle_recompress_raw(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    metadata = recompress_raw_cache(
+        args.input,
+        args.output,
+        parquet_compression=args.parquet_compression,
+        parquet_compression_level=args.parquet_compression_level,
+        min_rewrite_bytes=args.min_rewrite_bytes,
+        resume=args.resume,
+        continue_on_error=args.continue_on_error,
+        meta_output=args.meta_output,
+        units_output=args.out_units,
+    )
+    _print_json(metadata)
+    return 0 if metadata["status"] == "pass" else 1
+
+
 def _handle_emit_asset(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
     del provider
     if args.kind == "raw":
@@ -274,6 +316,7 @@ COMMAND_HANDLERS = {
     "download": _handle_download,
     "health": _handle_health,
     "aggregate-daily": _handle_aggregate_daily,
+    "recompress-raw": _handle_recompress_raw,
     "emit-asset": _handle_emit_asset,
     "quota": _handle_quota,
     "reconcile-daily": _handle_reconcile_daily,

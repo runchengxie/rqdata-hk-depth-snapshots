@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
         "download",
         "health",
         "aggregate-daily",
+        "recompress-raw",
         "emit-asset",
         "quota",
         "reconcile-daily",

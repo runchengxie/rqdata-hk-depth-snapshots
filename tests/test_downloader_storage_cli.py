@@ -10,6 +10,8 @@ from rqdata_tick_data.coverage import scan_raw_coverage
 from rqdata_tick_data.downloader import download_tick_depth
 from rqdata_tick_data.fields import parse_fields
 from rqdata_tick_data.storage import (
+    DEFAULT_PARQUET_COMPRESSION,
+    DEFAULT_PARQUET_COMPRESSION_LEVEL,
     atomic_write_parquet,
     batch_part_path,
     decode_order_book_id,
@@ -527,7 +529,25 @@ def test_legacy_batch_download_records_deprecation(tmp_path) -> None:
     assert result["deprecations"][0]["replacement"] == "raw_layout=symbol-date"
 
 
-def test_parquet_compression_recorded_in_metadata_and_coverage(tmp_path) -> None:
+def test_default_parquet_compression_recorded_in_metadata_and_coverage(tmp_path) -> None:
+    root = tmp_path / "cache"
+    fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
+    result = download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=root,
+        fields=fields,
+        batch_size=1,
+    )
+    rows = scan_raw_coverage(root, requested_fields=fields)
+    assert result["parquet"]["compression"] == DEFAULT_PARQUET_COMPRESSION
+    assert result["parquet"]["compression_level"] == DEFAULT_PARQUET_COMPRESSION_LEVEL
+    assert {row["compression"] for row in rows} == {DEFAULT_PARQUET_COMPRESSION}
+
+
+def test_explicit_parquet_compression_recorded_in_metadata_and_coverage(tmp_path) -> None:
     root = tmp_path / "cache"
     fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
     result = download_tick_depth(
@@ -545,6 +565,22 @@ def test_parquet_compression_recorded_in_metadata_and_coverage(tmp_path) -> None
     assert result["parquet"]["compression"] == "zstd"
     assert result["parquet"]["compression_level"] == 3
     assert {row["compression"] for row in rows} == {"zstd"}
+
+
+def test_snappy_without_compression_level_remains_supported(tmp_path) -> None:
+    result = download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        parquet_compression="snappy",
+    )
+
+    assert result["parquet"]["compression"] == "snappy"
+    assert result["parquet"]["compression_level"] is None
 
 
 def test_unsupported_parquet_options_fail_before_writing(tmp_path) -> None:

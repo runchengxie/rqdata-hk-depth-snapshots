@@ -18,6 +18,9 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 - `trade_date` 与路径一致。
 - 请求字段覆盖本地文件字段。
 
+新 raw parquet 默认使用 `zstd` level 3 无损压缩。metadata 和 coverage 输出会记录实际
+parquet codec 与 level，旧 `snappy` 分片仍可与新分片一起读取。
+
 ## Legacy Batch
 
 历史 batch layout：
@@ -65,6 +68,20 @@ audit 按 `trade_date + order_book_id` 记录下载单元状态。常见状态�
 - `quota_blocked`
 
 audit 用于定位失败单元、empty remote 单元、quota 截停位置和 resume 进度。
+
+## Raw Recompression Metadata
+
+`recompress-raw` 将 raw parquet 分片无损重编码到新目录，并保留 `parts/...` 相对路径。
+每次执行写出：
+
+```text
+meta/recompress_raw_<timestamp>.json
+audit/recompress_raw_<timestamp>.csv
+```
+
+metadata 记录源目录、输出目录、目标 parquet 配置、输入/输出字节数、处理分片数、
+失败分片和 audit 路径。audit 按 parquet part 记录 `rewritten`、`copied`、
+`skipped_existing` 或 `failed`，并记录源/目标 codec、行数和字节数。
 
 ## Daily Aggregate
 

@@ -86,7 +86,12 @@ rqdata-tick quota --pretty
 parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 ```
 
-历史 `raw_layout=batch` 数据仍可读取；新 batch 下载已废弃，并会写入 metadata。
+新下载默认使用 `zstd` level 3 写 parquet，在保留 raw tick 精度的前提下降低磁盘占用。
+需要更快写入时可显式传 `--compression snappy`。历史 `raw_layout=batch` 数据仍可读取；
+新 batch 下载已废弃，并会写入 metadata。
+
+已有 raw cache 可用 `rqdata-tick recompress-raw --input OLD --output NEW` 无损迁移到新的
+parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 
 ## 文档
 

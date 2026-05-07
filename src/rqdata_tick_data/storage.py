@@ -13,7 +13,8 @@ from urllib.parse import quote, unquote
 import pandas as pd
 
 DEFAULT_PARQUET_ENGINE = "pyarrow"
-DEFAULT_PARQUET_COMPRESSION = "snappy"
+DEFAULT_PARQUET_COMPRESSION = "zstd"
+DEFAULT_PARQUET_COMPRESSION_LEVEL = 3
 SUPPORTED_PARQUET_ENGINES = frozenset({"pyarrow"})
 SUPPORTED_PARQUET_COMPRESSIONS = frozenset({"snappy", "gzip", "brotli", "lz4", "zstd", None})
 PARQUET_COMPRESSION_LEVEL_CODECS = frozenset({"gzip", "brotli", "zstd"})
@@ -106,6 +107,8 @@ def validate_parquet_write_options(
         raise ValueError(
             f"Unsupported parquet compression {compression!r}; supported: {supported}, none."
         )
+    if compression_level is None and normalized_compression == DEFAULT_PARQUET_COMPRESSION:
+        compression_level = DEFAULT_PARQUET_COMPRESSION_LEVEL
     if compression_level is not None:
         if normalized_compression not in PARQUET_COMPRESSION_LEVEL_CODECS:
             supported = ", ".join(sorted(PARQUET_COMPRESSION_LEVEL_CODECS))

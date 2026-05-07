@@ -51,7 +51,8 @@ rqdata-tick probe \
 
 ## `download`
 
-批量下载 raw tick parquet。新下载默认使用 `symbol-date` raw layout。
+批量下载 raw tick parquet。新下载默认使用 `symbol-date` raw layout，并以 `zstd`
+level 3 写 parquet。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -67,8 +68,8 @@ rqdata-tick probe \
 | `--raw-layout` | `symbol-date` | `symbol-date` 或历史兼容 `batch` |
 | `--calendar` | `provider` | `provider` 使用 RQData 港股交易日历；`calendar` 使用本地日历推断 |
 | `--parquet-engine` | `pyarrow` | 写 parquet 的 engine |
-| `--compression` | `snappy` | parquet 压缩算法 |
-| `--compression-level` | 空 | parquet 压缩等级 |
+| `--compression` | `zstd` | parquet 压缩算法 |
+| `--compression-level` | `3` | parquet 压缩等级；显式使用 `snappy` 时保持为空 |
 | `--resume` | `true` | 跳过已通过本地校验的 symbol-date 单元 |
 | `--no-resume` | `false` | 强制重新请求并覆盖本次命中的单元 |
 | `--continue-on-error` | `false` | 单元失败后继续后续单元 |
@@ -135,6 +136,34 @@ rqdata-tick aggregate-daily \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --output artifacts/cache/rqdata/hk_tick_depth_daily/demo/data.parquet \
   --meta-output artifacts/cache/rqdata/hk_tick_depth_daily/demo/meta.json
+```
+
+## `recompress-raw`
+
+将 raw parquet cache 无损重编码到新目录，默认写 `zstd` level 3。该命令不修改输入目录，
+输出目录会保留原始 `parts/...` 相对路径，并写出 migration metadata 和 part 级 audit CSV。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--input` | 必填 | 源 raw cache 目录 |
+| `--output` | 必填 | 新 raw cache 输出目录 |
+| `--compression` | `zstd` | 目标 parquet 压缩算法 |
+| `--compression-level` | `3` | 目标 parquet 压缩等级 |
+| `--min-rewrite-bytes` | `0` | 小于该字节数的分片直接复制；`0` 表示全部重写 |
+| `--resume` | `true` | 跳过已匹配 schema、行数和目标 codec 的输出分片 |
+| `--no-resume` | `false` | 强制重写或复制所有分片 |
+| `--continue-on-error` | `false` | 单分片失败后继续处理后续分片 |
+| `--meta-output` | 空 | migration metadata JSON 输出路径 |
+| `--out-units` | 空 | part 级 audit CSV 输出路径 |
+
+示例：
+
+```bash
+rqdata-tick recompress-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506 \
+  --output artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506_zstd3 \
+  --compression zstd \
+  --compression-level 3
 ```
 
 ## `emit-asset`
