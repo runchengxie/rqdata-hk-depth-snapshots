@@ -4,6 +4,7 @@
 | --- | --- |
 | CLI | 命令行入口 `rqdata-tick` |
 | tick-depth | RQData 港股历史十档 tick 快照 |
+| tick-depth snapshot | 某标的某时间戳的十档盘口状态，带快照时点行情和累计成交字段 |
 | raw tick | provider 返回后写入 raw cache 的原始 tick 数据 |
 | raw cache | `download` 写出的 parquet 数据集 |
 | raw layout | raw cache 的目录布局 |
@@ -23,5 +24,7 @@
 | cross-clean | cross 项目的研究清洗口径 reference |
 | quality flag | 聚合产物中的质量标记 |
 | asset | 可发布或交付的目录，包含 manifest、meta、symbols、fields 和数据文件 |
+| order event | 逐笔委托新增、撤单、改单或成交回报事件；本项目不处理 |
+| trade print | 逐笔成交明细；本项目不下载或建模 |
 | record | 带日期的执行记录，保存账号、quota、provider 行为或下载覆盖等当日事实 |
 | vendor snapshot | 外部 provider API 文档快照，用作离线参考 |

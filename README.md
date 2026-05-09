@@ -99,6 +99,7 @@ parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 
 - [CLI 参考](docs/cli.md)
 - [工作流](docs/workflow.md)
+- [Tick-depth 数据说明](docs/tick-depth-data.md)
 - [数据契约](docs/data-contracts.md)
 - [质量门禁](docs/quality-gates.md)
 - [RQData Provider](docs/providers-rqdata.md)
@@ -108,4 +109,5 @@ parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 - [Vendor 参考](docs/vendor/)
 
 低频量化研究建议使用 `aggregate-daily` 产物，并对同日聚合特征做 lag 或严格
-point-in-time 控制。raw tick parquet 主要用于审计、质量门禁、样本校准和重新聚合。
+point-in-time 控制。raw tick parquet 是带累计成交字段的十档盘口快照，不是逐笔订单
+或逐笔成交数据；主要用于审计、质量门禁、样本校准和重新聚合。

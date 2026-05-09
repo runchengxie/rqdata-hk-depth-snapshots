@@ -1,6 +1,8 @@
 # 数据契约
 
-本页描述项目读写的稳定文件契约。字段级研究语义见 [术语表](terminology.md)，命令参数见 [CLI 参考](cli.md)。
+本页描述项目读写的稳定文件契约。数据研究语义见
+[Tick-depth 数据说明](tick-depth-data.md)，术语见 [术语表](terminology.md)，命令参数见
+[CLI 参考](cli.md)。
 
 ## Raw Cache
 
