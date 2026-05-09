@@ -269,6 +269,15 @@ quota 记录：
 01378.XHKG, 01398.XHKG, 02628.XHKG, 02899.XHKG
 ```
 
+后续修正：2026-05-08 quota 重置后，已将上述 9 个 symbol-days 写入同一 output
+root。补丁 metadata 为
+`artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/meta/download_20260507_220005.json`，
+补丁 audit 为
+`artifacts/cache/rqdata/hk_tick_depth/core_active15_addon_backfill_20251107_20251121/audit/download_20260507_220002_238203f4.csv`。
+重跑 health/aggregate 后，该窗口 raw rows 为 1,507,139，parquet 分片为 165，
+daily aggregate rows 为 165。详见
+`docs/records/2026-05-08-hk-tick-daily-download.md`。
+
 输出记录：
 
 | 类型 | 路径 |
@@ -320,7 +329,7 @@ quota 记录：
 在最近 44 个交易日全部有 tick 数据，质量门禁通过，且每日聚合全部可用于 research。
 本轮额外把同一池回填到 `2025-11-24`，并补齐 0.95 guard 最初拦下的
 `01378.XHKG` / `2025-12-10`。随后继续向前补到 `2025-11-07`，最终配额停在
-99.79%。active15 已完整覆盖 `2025-11-07` 到 `2026-05-06`，但 `2025-11-21`
-还有 9 个 symbol-days 因 quota guard 未取；若只使用完整面板，可从 `2025-11-24`
-开始。后续 quota 重置后，可以优先补齐 `2025-11-21` 剩余 9 格，再把这 15 个标的
-继续向前补到 `2025-04-01`，或者按相同方法继续筛选下一组 active add-on。
+99.79%。2026-05-07 当日 active15 已完整覆盖 `2025-11-24` 到 `2026-05-06`，
+`2025-11-21` 还有 9 个 symbol-days 因 quota guard 未取；该缺口已在
+2026-05-08 补齐，且同日已继续把这 15 个标的向前回填到 `2025-04-01`。后续可按
+相同方法继续筛选下一组 active add-on。

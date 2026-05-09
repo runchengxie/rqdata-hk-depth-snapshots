@@ -4,6 +4,8 @@
 
 | 日期 | 记录 |
 | --- | --- |
+| 2026-05-09 | [港股 Tick 日常补下载](2026-05-09-hk-tick-daily-download.md) |
+| 2026-05-08 | [港股 Tick 日常补下载](2026-05-08-hk-tick-daily-download.md) |
 | 2026-05-07 | [港股 Tick Core Active15 Add-on](2026-05-07-hk-tick-core-active15-addon.md) |
 | 2026-05-06 | [HK RQData 状态记录](2026-05-06-hk-rqdata-status.md) |
 | 2026-05-06 | [港股 Tick 下载规模估算](2026-05-06-hk-tick-download-sizing.md) |
