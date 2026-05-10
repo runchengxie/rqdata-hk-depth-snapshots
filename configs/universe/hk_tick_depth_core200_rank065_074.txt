@@ -1,0 +1,14 @@
+# HK tick-depth Core200 rank 065..074 slice selected on 2026-05-10.
+# Selection date: 2026-05-06; rank window: 20260401..20260506.
+# Basis: next 10 Core200 symbols not already covered by the local tick pool.
+# Details: configs/universe/hk_tick_depth_core300_selection_20260506.csv
+02228.XHKG
+06651.XHKG
+09626.XHKG
+01109.XHKG
+03330.XHKG
+06088.XHKG
+01072.XHKG
+02208.XHKG
+02600.XHKG
+02655.XHKG
