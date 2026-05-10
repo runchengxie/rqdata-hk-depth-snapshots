@@ -3,7 +3,7 @@
 本项目的稳定业务链路：
 
 ```text
-probe/download -> raw cache -> health -> aggregate-daily -> reconcile-daily -> emit-asset
+probe/download -> raw cache -> health -> aggregate-daily -> reconcile-daily -> emit-asset -> package-assets
 ```
 
 ## 1. Probe
@@ -152,7 +152,36 @@ rqdata-tick emit-asset \
 
 asset 目录契约见 [数据契约](data-contracts.md)。
 
-## 8. 研究和审计使用
+## 8. Package Assets
+
+`package-assets` 把本地 raw cache、日频聚合、报告、配置和记录打成本地 `.tar.gz`
+分包。默认推荐先保留本地 tarball；上传 GitHub Release 时再显式运行 `release-assets`。
+
+```bash
+rqdata-tick package-assets \
+  --preset current-cache \
+  --name hk_tick_depth_current \
+  --as-of 20260509 \
+  --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --overwrite
+```
+
+只归档正式 asset 目录时，显式传入 `--raw-source` 和 `--daily-source`：
+
+```bash
+rqdata-tick package-assets \
+  --name hk_tick_depth_core \
+  --as-of 20260509 \
+  --raw-source artifacts/assets/rqdata/hk/tick_depth/core \
+  --daily-source artifacts/assets/rqdata/hk/tick_depth_daily/core \
+  --metadata-source docs/records \
+  --config-source path/to/universe_config
+```
+
+生成的 `manifest.yml` 记录每个 tarball 的 `sha256`、字节数、part 和样例 entry。
+公开或跨账号分发 provider 数据前，先确认账号和数据供应商条款。
+
+## 9. 研究和审计使用
 
 raw tick parquet 主要用于审计、质量门禁、样本校准和重新聚合。研究模型通常使用
 `aggregate-daily` 产物，并按研究口径筛选 `is_usable_for_research` 或相关质量标记。

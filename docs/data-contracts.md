@@ -118,6 +118,33 @@ fields.txt
 
 raw asset 保留 raw parquet 分片；daily asset 保存聚合后的 parquet。`symbols.txt` 和 `fields.txt` 用于快速检查覆盖范围，`manifest.yml` 和 `meta.json` 用于发布和复核。
 
+## Backup Tarballs
+
+`package-assets` 输出本地备份目录：
+
+```text
+manifest.yml
+manifest.json
+README.md
+<name>_<as_of>_release_notes.txt
+<name>-<as_of>-raw-part001.tar.gz
+<name>-<as_of>-daily.tar.gz
+<name>-<as_of>-metadata.tar.gz
+<name>-<as_of>-reports.tar.gz
+<name>-<as_of>-configs.tar.gz
+```
+
+`manifest.yml` 记录：
+
+- 分发名称、`as_of`、生成时间和 generator 版本。
+- 被选中的 source paths 和缺失 source paths。
+- 每个 tarball 的 part、chunk 序号、输入字节数、压缩后字节数、文件数和 `sha256`。
+- 每个 tarball 的前几个 archive entry，便于快速确认路径布局。
+
+tarball 内部路径以 part 为第一层，例如 `raw/<source_name>/...`、`daily/<source_name>/...`
+和 config part 下的 `<source_name>/...`。恢复时先解压到工作目录，再把研究或检查命令指向解压后的
+raw、daily、reports 或 configs 路径。
+
 ## 低内存约束
 
 `health`、`aggregate-daily`、`reconcile-daily` 和 raw `emit-asset` 应按分片扫描 raw cache。峰值内存应接近一个 parquet 分片加紧凑诊断或日频行。

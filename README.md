@@ -13,7 +13,7 @@
 核心流程：
 
 ```text
-probe/download -> raw cache -> health -> aggregate-daily -> reconcile-daily -> emit-asset
+probe/download -> raw cache -> health -> aggregate-daily -> reconcile-daily -> emit-asset -> package-assets
 ```
 
 ## 安装

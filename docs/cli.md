@@ -12,6 +12,7 @@ rqdata-tick <command> [options]
 rqdata-tick download --help
 rqdata-tick health --help
 rqdata-tick reconcile-daily --help
+rqdata-tick package-assets --help
 ```
 
 ## 命令总览
@@ -23,6 +24,8 @@ rqdata-tick reconcile-daily --help
 | `health` | 检查 raw tick 自身质量 |
 | `aggregate-daily` | 从 raw tick 聚合日频特征 |
 | `emit-asset` | 输出 asset 目录 |
+| `package-assets` | 生成本地备份 tarball |
+| `release-assets` | 上传备份 tarball 到 GitHub Release |
 | `quota` | 查看 RQData quota |
 | `reconcile-daily` | 对账 tick 聚合结果与外部日频 reference asset |
 
@@ -183,6 +186,78 @@ rqdata-tick emit-asset \
   --kind raw \
   --source artifacts/cache/rqdata/hk_tick_depth/demo \
   --output artifacts/assets/rqdata/hk/tick_depth/demo
+```
+
+## `package-assets`
+
+将本地 tick-depth 数据、聚合结果、报告、配置和记录打成可搬运的 `.tar.gz` 分包。
+单个 tarball 默认控制在 GitHub Release asset 限制以下。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--preset` | `explicit` | `explicit` 使用显式路径；`current-cache` 选择当前默认 cache、reports、universe configs 和 dated records |
+| `--name` | `tick-depth` | 分发名称，用于 manifest 和 tarball 文件名 |
+| `--as-of` | 当日 UTC 日期 | 资产日期标签，格式建议 `YYYYMMDD` |
+| `--tar-dir` | `artifacts/releases/<name>_<as_of>_tarballs` | tarball 输出目录 |
+| `--overwrite` | `false` | 覆盖已有非空输出目录 |
+| `--dry-run` | `false` | 只生成选择计划，不写 tarball |
+| `--part` | 全部 part | 选择 `raw`、`daily`、`metadata`、`reports`、`configs`；可重复 |
+| `--raw-source` | 空 | 额外 raw cache 或 raw asset 路径；可重复 |
+| `--daily-source` | 空 | 额外 daily aggregate 或 daily asset 路径；可重复 |
+| `--metadata-source` | 空 | 额外 metadata 或记录路径；可重复 |
+| `--report-source` | 空 | 额外 report 路径；可重复 |
+| `--config-source` | 空 | 额外 config 或 universe 路径；可重复 |
+| `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分 |
+
+示例：
+
+```bash
+rqdata-tick package-assets \
+  --preset current-cache \
+  --name hk_tick_depth_current \
+  --as-of 20260509 \
+  --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --overwrite
+```
+
+显式选择已 emit 的 raw/daily asset：
+
+```bash
+rqdata-tick package-assets \
+  --name hk_tick_depth_core \
+  --as-of 20260509 \
+  --raw-source artifacts/assets/rqdata/hk/tick_depth/core \
+  --daily-source artifacts/assets/rqdata/hk/tick_depth_daily/core \
+  --metadata-source docs/records \
+  --config-source path/to/universe_config
+```
+
+## `release-assets`
+
+把 `package-assets` 生成的 `.tar.gz` 文件上传到 GitHub Release。该命令依赖本机
+GitHub CLI `gh`，并且只处理已有 tarball 目录。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--tar-dir` | 必填 | `package-assets` 输出目录 |
+| `--tag` | 必填 | GitHub Release tag |
+| `--repo` | 当前 git remote | 目标仓库，格式 `owner/name` |
+| `--title` | tag | Release 标题 |
+| `--notes-file` | 自动选择 release notes | Release notes 文件 |
+| `--draft` | `false` | 创建 draft release |
+| `--prerelease` | `false` | 标记为 prerelease |
+| `--latest` | `false` | 标记为 latest |
+| `--clobber` | `false` | 已存在同名 asset 时覆盖 |
+| `--dry-run` | `false` | 打印将执行的 `gh` 命令 |
+
+示例：
+
+```bash
+rqdata-tick release-assets \
+  --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --tag hk-tick-depth-current-20260509 \
+  --repo owner/private-repo \
+  --draft
 ```
 
 ## `quota`

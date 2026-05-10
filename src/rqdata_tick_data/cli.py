@@ -23,6 +23,12 @@ from rqdata_tick_data.reconcile import (
     ReconcileConfig,
     write_reconciliation_report,
 )
+from rqdata_tick_data.release_assets import (
+    DEFAULT_MAX_TAR_BYTES,
+    PART_NAMES,
+    package_tick_assets,
+    upload_release_assets,
+)
 from rqdata_tick_data.rq_client import RQDataClient, TickDataProvider
 from rqdata_tick_data.storage import DEFAULT_PARQUET_COMPRESSION
 from rqdata_tick_data.symbols import parse_symbols
@@ -124,6 +130,43 @@ def build_parser() -> argparse.ArgumentParser:
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
     asset.add_argument("--source", required=True)
     asset.add_argument("--output", required=True)
+
+    package_assets = subparsers.add_parser(
+        "package-assets",
+        help="Package local tick-depth assets into release tarballs.",
+    )
+    package_assets.add_argument(
+        "--preset",
+        choices=["explicit", "current-cache"],
+        default="explicit",
+    )
+    package_assets.add_argument("--name", default="tick-depth")
+    package_assets.add_argument("--as-of")
+    package_assets.add_argument("--tar-dir")
+    package_assets.add_argument("--overwrite", action="store_true")
+    package_assets.add_argument("--dry-run", action="store_true")
+    package_assets.add_argument("--part", action="append", choices=PART_NAMES, default=[])
+    package_assets.add_argument("--raw-source", action="append", default=[])
+    package_assets.add_argument("--daily-source", action="append", default=[])
+    package_assets.add_argument("--metadata-source", action="append", default=[])
+    package_assets.add_argument("--report-source", action="append", default=[])
+    package_assets.add_argument("--config-source", action="append", default=[])
+    package_assets.add_argument("--max-tar-bytes", type=int, default=DEFAULT_MAX_TAR_BYTES)
+
+    release_assets = subparsers.add_parser(
+        "release-assets",
+        help="Upload packaged tick-depth tarballs to a GitHub Release.",
+    )
+    release_assets.add_argument("--tar-dir", required=True)
+    release_assets.add_argument("--tag", required=True)
+    release_assets.add_argument("--repo")
+    release_assets.add_argument("--title")
+    release_assets.add_argument("--notes-file")
+    release_assets.add_argument("--draft", action="store_true")
+    release_assets.add_argument("--prerelease", action="store_true")
+    release_assets.add_argument("--latest", action="store_true")
+    release_assets.add_argument("--clobber", action="store_true")
+    release_assets.add_argument("--dry-run", action="store_true")
 
     quota = subparsers.add_parser("quota", help="Show RQData quota usage.")
     quota.add_argument("--pretty", action="store_true")
@@ -265,6 +308,45 @@ def _handle_emit_asset(args: argparse.Namespace, provider: TickDataProvider | No
     return 0
 
 
+def _handle_package_assets(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    metadata = package_tick_assets(
+        preset=args.preset,
+        name=args.name,
+        as_of=args.as_of,
+        tar_dir=args.tar_dir,
+        raw_sources=args.raw_source,
+        daily_sources=args.daily_source,
+        metadata_sources=args.metadata_source,
+        report_sources=args.report_source,
+        config_sources=args.config_source,
+        parts=args.part,
+        max_tar_bytes=args.max_tar_bytes,
+        overwrite=args.overwrite,
+        dry_run=args.dry_run,
+    )
+    _print_json(metadata)
+    return 0
+
+
+def _handle_release_assets(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    metadata = upload_release_assets(
+        tar_dir=args.tar_dir,
+        tag=args.tag,
+        repo=args.repo,
+        title=args.title,
+        notes_file=args.notes_file,
+        draft=args.draft,
+        prerelease=args.prerelease,
+        latest=args.latest,
+        clobber=args.clobber,
+        dry_run=args.dry_run,
+    )
+    _print_json(metadata)
+    return int(metadata.get("returncode") or 0)
+
+
 def _handle_quota(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
     selected_provider = provider or _provider(args.fake_provider)
     payload = augment_quota_payload(selected_provider.quota_snapshot())
@@ -318,6 +400,8 @@ COMMAND_HANDLERS = {
     "aggregate-daily": _handle_aggregate_daily,
     "recompress-raw": _handle_recompress_raw,
     "emit-asset": _handle_emit_asset,
+    "package-assets": _handle_package_assets,
+    "release-assets": _handle_release_assets,
     "quota": _handle_quota,
     "reconcile-daily": _handle_reconcile_daily,
 }

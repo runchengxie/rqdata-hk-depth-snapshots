@@ -7,7 +7,7 @@
 | 快速查命令和参数 | [CLI 参考](cli.md) |
 | 跑完整流程 | [工作流](workflow.md) |
 | 理解 tick-depth 数据语义、可派生特征和策略边界 | [Tick-depth 数据说明](tick-depth-data.md) |
-| 理解 raw cache、metadata、audit、asset 输出 | [数据契约](data-contracts.md) |
+| 理解 raw cache、metadata、audit、asset 和备份输出 | [数据契约](data-contracts.md) |
 | 判断数据质量和对账结果 | [质量门禁](quality-gates.md) |
 | 配置 FakeProvider 或真实 RQData | [RQData Provider](providers-rqdata.md) |
 | 运行测试、lint、维护脚本 | [开发与维护](development.md) |
