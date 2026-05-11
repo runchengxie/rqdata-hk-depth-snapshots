@@ -106,7 +106,7 @@ parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 - [开发与维护](docs/development.md)
 - [术语表](docs/terminology.md)
 - [执行记录](docs/records/)
-- [Vendor 参考](docs/vendor/)
+- [RQData API 使用摘要与快照](docs/vendor/)
 
 低频量化研究建议使用 `aggregate-daily` 产物，并对同日聚合特征做 lag 或严格
 point-in-time 控制。raw tick parquet 是带累计成交字段的十档盘口快照，不是逐笔订单

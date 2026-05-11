@@ -1,16 +1,16 @@
 # 执行记录
 
-本目录保存带日期的执行记录。记录中的 quota、账号状态、provider 行为、下载覆盖、路径和样本估算只描述记录日期的事实。
+本目录保存会随账号、quota、provider 行为或下载覆盖变化的 dated record。稳定规则放在
+`docs/workflow.md`、`docs/data-contracts.md`、`docs/quality-gates.md`、
+`docs/providers-rqdata.md` 和 `docs/development.md`。
 
-| 日期 | 记录 |
+| 记录 | 内容 |
 | --- | --- |
-| 2026-05-11 | [港股 Tick 日常补下载](2026-05-11-hk-tick-daily-download.md) |
-| 2026-05-10 | [港股 Tick 日常补下载](2026-05-10-hk-tick-daily-download.md) |
-| 2026-05-09 | [港股 Tick Core Universe](2026-05-09-hk-tick-core-universe.md) |
-| 2026-05-09 | [港股 Tick 日常补下载](2026-05-09-hk-tick-daily-download.md) |
-| 2026-05-08 | [港股 Tick 日常补下载](2026-05-08-hk-tick-daily-download.md) |
-| 2026-05-07 | [港股 Tick Core Active15 Add-on](2026-05-07-hk-tick-core-active15-addon.md) |
-| 2026-05-06 | [HK RQData 状态记录](2026-05-06-hk-rqdata-status.md) |
-| 2026-05-06 | [港股 Tick 下载规模估算](2026-05-06-hk-tick-download-sizing.md) |
-| 2026-05-06 | [港股 Tick 下载路线图](2026-05-06-hk-tick-download-roadmap.md) |
-| 2026-05-06 | [港股 Tick Round 1 标的说明](2026-05-06-hk-tick-round1-symbols.md) |
+| [2026-05-06 RQData provider baseline](2026-05-06-hk-rqdata-provider-baseline.md) | 权限窗口、quota、样本估算和下载策略 |
+| [2026-05-11 universe and coverage](2026-05-11-hk-tick-universe-and-coverage.md) | Core universe、配置文件组织和覆盖状态 |
+| [2026-05-11 download summary](2026-05-11-hk-tick-download-summary.md) | 2026-05-06 到 2026-05-11 的下载、质量和聚合摘要 |
+
+旧逐日流水已压缩成上面三份摘要。需要逐 run 审计时，以对应 raw cache 下的
+`meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。
+
+不要在记录中写入 secrets、token、私有账号凭据或完整本地 credential 路径。

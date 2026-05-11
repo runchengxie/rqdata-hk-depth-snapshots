@@ -13,6 +13,6 @@
 | 运行测试、lint、维护脚本 | [开发与维护](development.md) |
 | 统一术语 | [术语表](terminology.md) |
 | 查看带日期的 quota、下载、覆盖记录 | [执行记录](records/) |
-| 查看 RQData API 离线快照 | [Vendor 参考](vendor/) |
+| 查看 RQData API 使用摘要和外部快照 | [Vendor 参考](vendor/) |
 
 稳定文档描述长期规则；`records/` 目录保存某一日期的账号、quota、provider 行为和执行结果。

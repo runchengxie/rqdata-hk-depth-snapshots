@@ -30,7 +30,8 @@ uv sync --extra rqdata --group dev
 - quota 查询。
 - 港股合约和字段语义核对。
 
-完整 vendor API 离线快照见 [Vendor 参考](vendor/README.md)。该快照只作为查询材料，项目支持范围以 CLI、代码和本目录稳定文档为准。
+项目实际使用的 provider 语义见 [RQData 港股 API 使用摘要](vendor/rqdata-hk-used-apis.md)。
+完整外部快照只作为离线查询材料。
 
 ## 认证
 

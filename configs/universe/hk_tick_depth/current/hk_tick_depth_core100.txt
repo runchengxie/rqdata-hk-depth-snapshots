@@ -1,7 +1,3 @@
-# HK tick-depth Core100 universe selected on 2026-05-11.
-# Selection date: 2026-05-06; rank window: 20260401..20260506.
-# Basis: first 100 symbols from configs/universe/hk_tick_depth_core200.txt.
-# Details: configs/universe/hk_tick_depth_core300_selection_20260506.csv
 00700.XHKG
 09988.XHKG
 00981.XHKG

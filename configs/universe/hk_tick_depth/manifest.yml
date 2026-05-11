@@ -1,0 +1,83 @@
+version: 1
+dataset: hk_tick_depth
+market: hk
+id_format: rqdata_order_book_id
+
+selection:
+  selection_date: 2026-05-06
+  rank_window_start: 2026-04-01
+  rank_window_end: 2026-05-06
+  instrument_filter:
+    type: CS
+    status: Active
+    stock_connect: non_null
+  ranking_metric: daily_total_turnover_sum
+  selection_file: current/hk_tick_depth_core300_selection_20260506.csv
+
+current:
+  core100:
+    file: current/hk_tick_depth_core100.txt
+    symbols: 100
+    basis: first 100 symbols from Core200
+  core200:
+    file: current/hk_tick_depth_core200.txt
+    symbols: 200
+    basis: top 200 eligible symbols by rank window turnover
+  core300:
+    file: current/hk_tick_depth_core300.txt
+    symbols: 300
+    basis: top 300 eligible symbols by rank window turnover
+
+slices:
+  core200_rank050_064:
+    file: slices/hk_tick_depth_core200_rank050_064.txt
+    symbols: 15
+    role: completed Core200 backfill slice
+  core200_rank065_074:
+    file: slices/hk_tick_depth_core200_rank065_074.txt
+    symbols: 10
+    role: completed Core200 backfill slice
+  core200_rank075_090:
+    file: slices/hk_tick_depth_core200_rank075_090.txt
+    symbols: 15
+    role: completed Core200 backfill slice
+  core200_rank091_100:
+    file: slices/hk_tick_depth_core200_rank091_100.txt
+    symbols: 10
+    role: completed Core200 backfill slice
+  core200_rank101:
+    file: slices/hk_tick_depth_core200_rank101.txt
+    symbols: 1
+    role: completed single-symbol Core200 backfill slice
+  core200_rank102_110_recent2_20260508:
+    file: slices/hk_tick_depth_core200_rank102_110_recent2_20260508.txt
+    symbols: 9
+    role: latest two-day increment only; historical backfill still pending
+
+probes:
+  micro_tail25_20260506:
+    file: probes/hk_tick_depth_micro_tail25_probe_20260506.txt
+    symbols: 25
+    basis: bottom 25 eligible stock-connect candidates by rank window turnover
+  low_turnover_nonzero25_20260506:
+    file: probes/hk_tick_depth_low_turnover_nonzero25_probe_20260506.txt
+    symbols: 25
+    basis: positive-turnover names immediately above the zero-heavy tail probe
+
+archive:
+  round1_20:
+    file: archive/hk_tick_depth_round1_20.txt
+    symbols: 20
+    role: bootstrap validation sample
+  core_active15_addon:
+    file: archive/hk_tick_depth_core_active15_addon.txt
+    symbols: 15
+    role: pre-Core active add-on sample
+  core_active10_addon2:
+    file: archive/hk_tick_depth_core_active10_addon2.txt
+    symbols: 10
+    role: pre-Core active add-on sample
+  core_active15_addon3:
+    file: archive/hk_tick_depth_core_active15_addon3.txt
+    symbols: 15
+    role: pre-Core active add-on sample

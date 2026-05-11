@@ -6,7 +6,7 @@
 
 适合读者：需要离线核对 RQData 港股接口语义的人。
 
-相关页面：[Vendor 参考](README.md)、[HK RQData 状态记录](../records/2026-05-06-hk-rqdata-status.md)、[RQData Provider](../providers-rqdata.md)
+相关页面：[Vendor 参考](../README.md)、[项目使用摘要](../rqdata-hk-used-apis.md)、[RQData Provider](../../providers-rqdata.md)
 
 下方保留 vendor 文档快照。项目当前核心功能只使用其中和港股合约、交易日历、tick 深度、日频 reference 与 quota 相关的部分。若本页与仓库代码、`manifest.yml`、执行记录或本地资产状态冲突，以仓库当前实现和本地资产记录为准。
 
