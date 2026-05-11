@@ -1,0 +1,5 @@
+# HK tick-depth Core200 rank 101 slice selected on 2026-05-11.
+# Selection date: 2026-05-06; rank window: 20260401..20260506.
+# Basis: next Core200 symbol after the local 100/200 tick coverage point.
+# Details: configs/universe/hk_tick_depth_core300_selection_20260506.csv
+02601.XHKG

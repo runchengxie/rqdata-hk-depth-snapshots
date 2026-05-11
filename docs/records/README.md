@@ -4,6 +4,8 @@
 
 | 日期 | 记录 |
 | --- | --- |
+| 2026-05-11 | [港股 Tick 日常补下载](2026-05-11-hk-tick-daily-download.md) |
+| 2026-05-10 | [港股 Tick 日常补下载](2026-05-10-hk-tick-daily-download.md) |
 | 2026-05-09 | [港股 Tick Core Universe](2026-05-09-hk-tick-core-universe.md) |
 | 2026-05-09 | [港股 Tick 日常补下载](2026-05-09-hk-tick-daily-download.md) |
 | 2026-05-08 | [港股 Tick 日常补下载](2026-05-08-hk-tick-daily-download.md) |
