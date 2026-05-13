@@ -49,10 +49,22 @@ slices:
     file: slices/hk_tick_depth_core200_rank101.txt
     symbols: 1
     role: completed single-symbol Core200 backfill slice
+  core200_rank102_110:
+    file: slices/hk_tick_depth_core200_rank102_110.txt
+    symbols: 9
+    role: completed Core200 backfill slice
   core200_rank102_110_recent2_20260508:
     file: slices/hk_tick_depth_core200_rank102_110_recent2_20260508.txt
     symbols: 9
-    role: latest two-day increment only; historical backfill still pending
+    role: historical two-day increment slice; superseded by core200_rank102_110 after 2026-05-13 backfill
+  core200_rank111_120:
+    file: slices/hk_tick_depth_core200_rank111_120.txt
+    symbols: 10
+    role: completed Core200 backfill slice
+  core200_rank121_125:
+    file: slices/hk_tick_depth_core200_rank121_125.txt
+    symbols: 5
+    role: completed Core200 backfill slice
 
 probes:
   micro_tail25_20260506:

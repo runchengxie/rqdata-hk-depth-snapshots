@@ -9,6 +9,7 @@
 | [2026-05-06 RQData provider baseline](2026-05-06-hk-rqdata-provider-baseline.md) | 权限窗口、quota、样本估算和下载策略 |
 | [2026-05-11 universe and coverage](2026-05-11-hk-tick-universe-and-coverage.md) | Core universe、配置文件组织和覆盖状态 |
 | [2026-05-11 download summary](2026-05-11-hk-tick-download-summary.md) | 2026-05-06 到 2026-05-11 的下载、质量和聚合摘要 |
+| [2026-05-13 download progress](2026-05-13-hk-tick-download-progress.md) | Core200 rank102..125 历史补齐、质量和 quota 摘要 |
 
 旧逐日流水已压缩成上面三份摘要。需要逐 run 审计时，以对应 raw cache 下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。
