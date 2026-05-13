@@ -12,6 +12,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from rqdata_tick_data.progress import ProgressBar
 from rqdata_tick_data.storage import (
     DEFAULT_PARQUET_COMPRESSION,
     DEFAULT_PARQUET_COMPRESSION_LEVEL,
@@ -155,6 +156,7 @@ def recompress_raw_cache(
     continue_on_error: bool = False,
     meta_output: str | Path | None = None,
     units_output: str | Path | None = None,
+    progress: bool = False,
 ) -> dict[str, Any]:
     """Rewrite raw parquet parts to a new cache using the requested compression."""
     source = Path(input_root)
@@ -169,6 +171,7 @@ def recompress_raw_cache(
         compression_level=parquet_compression_level,
     )
     parts = discover_parquet_parts(source)
+    total_source_bytes = sum(part.stat().st_size for part in parts)
     stamp = now_stamp()
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -179,6 +182,12 @@ def recompress_raw_cache(
     copied_parts = 0
     skipped_existing_parts = 0
     started = time.perf_counter()
+    progress_bar = ProgressBar(
+        label="recompress-raw",
+        total_units=len(parts),
+        total_bytes=total_source_bytes,
+        enabled=progress,
+    )
 
     for part in parts:
         relative = _relative_part_path(source, part)
@@ -242,12 +251,19 @@ def recompress_raw_cache(
             if not continue_on_error:
                 row["elapsed_seconds"] = round(time.perf_counter() - unit_started, 6)
                 rows.append(row)
+                progress_bar.update(
+                    bytes_done=source_size,
+                    suffix=row["action"],
+                    force=True,
+                )
                 break
         row["elapsed_seconds"] = round(time.perf_counter() - unit_started, 6)
         rows.append(row)
+        progress_bar.update(bytes_done=source_size, suffix=row["action"])
 
     elapsed = time.perf_counter() - started
     status = "pass" if not failures and len(parts) == len(rows) else "fail"
+    progress_bar.close(suffix=status)
     audit_path = (
         Path(units_output)
         if units_output

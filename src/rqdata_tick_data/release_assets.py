@@ -14,11 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from rqdata_tick_data import __version__
-from rqdata_tick_data.storage import write_json, write_yaml
+from rqdata_tick_data.storage import parse_symbol_date_part_path, write_json, write_yaml
 
 GITHUB_RELEASE_ASSET_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_TAR_BYTES = 1_900_000_000
 PART_NAMES = ("raw", "daily", "metadata", "reports", "configs")
+ARCHIVE_FORMATS = ("tar.gz", "tar.zst", "tar")
+DEFAULT_ARCHIVE_FORMAT = "tar.gz"
+RAW_DEDUPE_MODES = ("none", "symbol-date")
 
 
 @dataclass(frozen=True)
@@ -163,18 +166,189 @@ def _chunk_entries(entries: list[PackageEntry], max_input_bytes: int) -> list[li
     return chunks
 
 
-def _tar_name(*, name: str, as_of: str, part: str, index: int, total: int) -> str:
+def _archive_extension(archive_format: str) -> str:
+    if archive_format == "tar.gz":
+        return "tar.gz"
+    if archive_format == "tar.zst":
+        return "tar.zst"
+    if archive_format == "tar":
+        return "tar"
+    raise ValueError(f"Unknown archive format: {archive_format}")
+
+
+def _tar_name(
+    *,
+    name: str,
+    as_of: str,
+    part: str,
+    index: int,
+    total: int,
+    archive_format: str,
+) -> str:
     suffix = f"{part}-part{index:03d}" if total > 1 or part == "raw" else part
-    return f"{name}-{as_of}-{suffix}.tar.gz"
+    return f"{name}-{as_of}-{suffix}.{_archive_extension(archive_format)}"
 
 
-def _tar_entries(tar_path: Path, entries: list[PackageEntry]) -> None:
+def _validate_archive_options(
+    *,
+    archive_format: str,
+    archive_compression_level: int | None,
+) -> None:
+    if archive_format not in ARCHIVE_FORMATS:
+        supported = ", ".join(ARCHIVE_FORMATS)
+        raise ValueError(f"Unsupported archive format {archive_format!r}; supported: {supported}.")
+    if archive_compression_level is None:
+        return
+    if archive_format == "tar":
+        raise ValueError("--archive-compression-level is not supported for uncompressed tar.")
+    if archive_compression_level < 1:
+        raise ValueError("--archive-compression-level must be a positive integer.")
+    if archive_format == "tar.gz" and archive_compression_level > 9:
+        raise ValueError("--archive-compression-level for tar.gz must be between 1 and 9.")
+    if archive_format == "tar.zst" and archive_compression_level > 22:
+        raise ValueError("--archive-compression-level for tar.zst must be between 1 and 22.")
+
+
+def _add_entries_to_tar(tar: tarfile.TarFile, entries: list[PackageEntry]) -> None:
+    for entry in entries:
+        tar.add(entry.source, arcname=entry.arcname, recursive=False)
+
+
+def _tar_zst_entries(
+    tar_path: Path,
+    entries: list[PackageEntry],
+    *,
+    archive_compression_level: int | None,
+) -> None:
+    binary = shutil.which("zstd")
+    if binary is None:
+        raise RuntimeError("tar.zst archive format requires a zstd binary in PATH.")
+    cmd = [binary, "-q", "-f", "-T0"]
+    if archive_compression_level is not None:
+        cmd.append(f"-{archive_compression_level}")
+    cmd.extend(["-o", str(tar_path)])
+    process = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if process.stdin is None:
+        raise RuntimeError("Failed to open zstd stdin.")
+    try:
+        with tarfile.open(fileobj=process.stdin, mode="w|") as tar:
+            _add_entries_to_tar(tar, entries)
+        process.stdin.close()
+        returncode = process.wait()
+    except Exception:
+        process.kill()
+        process.wait()
+        raise
+    stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
+    if returncode != 0:
+        raise RuntimeError(f"zstd failed with exit code {returncode}: {stderr.strip()}")
+
+
+def _tar_entries(
+    tar_path: Path,
+    entries: list[PackageEntry],
+    *,
+    archive_format: str,
+    archive_compression_level: int | None,
+) -> None:
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     if tar_path.exists():
         tar_path.unlink()
-    with tarfile.open(tar_path, "w:gz") as tar:
-        for entry in entries:
-            tar.add(entry.source, arcname=entry.arcname, recursive=False)
+    if archive_format == "tar.gz":
+        kwargs: dict[str, Any] = {}
+        if archive_compression_level is not None:
+            kwargs["compresslevel"] = archive_compression_level
+        with tarfile.open(tar_path, "w:gz", **kwargs) as tar:
+            _add_entries_to_tar(tar, entries)
+    elif archive_format == "tar.zst":
+        _tar_zst_entries(
+            tar_path,
+            entries,
+            archive_compression_level=archive_compression_level,
+        )
+    elif archive_format == "tar":
+        with tarfile.open(tar_path, "w") as tar:
+            _add_entries_to_tar(tar, entries)
+    else:
+        raise ValueError(f"Unknown archive format: {archive_format}")
+
+
+def _archive_files(tar_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for pattern in ("*.tar.gz", "*.tar.zst", "*.tar"):
+        paths.extend(tar_root.glob(pattern))
+    return sorted(set(paths))
+
+
+def _raw_symbol_date_key(entry: PackageEntry) -> tuple[str, str] | None:
+    trade_date, order_book_id = parse_symbol_date_part_path(entry.source)
+    if trade_date is None or order_book_id is None:
+        return None
+    return trade_date, order_book_id
+
+
+def _raw_dedupe_rank(entry: PackageEntry) -> tuple[int, int, str]:
+    try:
+        mtime_ns = entry.source.stat().st_mtime_ns
+    except FileNotFoundError:
+        mtime_ns = 0
+    return (mtime_ns, entry.size_bytes, entry.arcname)
+
+
+def _dedupe_raw_entries(
+    entries: list[PackageEntry],
+    *,
+    mode: str,
+) -> tuple[list[PackageEntry], dict[str, Any]]:
+    if mode == "none":
+        return entries, {"mode": mode, "dropped_entries": 0}
+    if mode != "symbol-date":
+        raise ValueError(f"Unknown raw dedupe mode: {mode}")
+
+    grouped: dict[tuple[str, str], list[PackageEntry]] = {}
+    passthrough: list[PackageEntry] = []
+    for entry in entries:
+        key = _raw_symbol_date_key(entry)
+        if key is None:
+            passthrough.append(entry)
+        else:
+            grouped.setdefault(key, []).append(entry)
+
+    kept: list[PackageEntry] = []
+    dropped_count = 0
+    dropped_samples: list[dict[str, str]] = []
+    for key, candidates in grouped.items():
+        selected = max(candidates, key=_raw_dedupe_rank)
+        kept.append(selected)
+        for candidate in candidates:
+            if candidate == selected:
+                continue
+            dropped_count += 1
+            if len(dropped_samples) < 20:
+                dropped_samples.append(
+                    {
+                        "trade_date": key[0],
+                        "order_book_id": key[1],
+                        "kept": selected.arcname,
+                        "dropped": candidate.arcname,
+                    }
+                )
+
+    deduped = sorted([*passthrough, *kept], key=lambda entry: entry.arcname)
+    report = {
+        "mode": mode,
+        "candidate_entries": sum(len(candidates) for candidates in grouped.values()),
+        "kept_symbol_date_entries": len(kept),
+        "passthrough_entries": len(passthrough),
+        "dropped_entries": dropped_count,
+        "sample_dropped_entries": dropped_samples,
+    }
+    return deduped, report
 
 
 def _sha256(path: Path) -> str:
@@ -252,11 +426,21 @@ def package_tick_assets(
     config_sources: list[str] | None = None,
     parts: list[str] | None = None,
     max_tar_bytes: int = DEFAULT_MAX_TAR_BYTES,
+    archive_format: str = DEFAULT_ARCHIVE_FORMAT,
+    archive_compression_level: int | None = None,
+    raw_dedupe: str = "none",
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     root = Path(repo_root).resolve()
     selected_as_of = as_of or default_as_of()
+    _validate_archive_options(
+        archive_format=archive_format,
+        archive_compression_level=archive_compression_level,
+    )
+    if raw_dedupe not in RAW_DEDUPE_MODES:
+        supported = ", ".join(RAW_DEDUPE_MODES)
+        raise ValueError(f"Unsupported raw dedupe mode {raw_dedupe!r}; supported: {supported}.")
     output_dir = (
         _resolve(tar_dir, repo_root=root)
         if tar_dir is not None
@@ -292,6 +476,7 @@ def package_tick_assets(
     all_missing: list[str] = []
     tarballs: list[dict[str, Any]] = []
     sources_summary: dict[str, list[str]] = {}
+    dedupe_summary: dict[str, dict[str, Any]] = {}
     generated_at = _utc_now().isoformat(timespec="seconds")
     max_input_bytes = max(1, max_tar_bytes - 50 * 1024 * 1024)
 
@@ -303,6 +488,8 @@ def package_tick_assets(
         )
         all_missing.extend(missing)
         sources_summary[part] = [str(path) for path in source_map.get(part, [])]
+        if part == "raw":
+            entries, dedupe_summary[part] = _dedupe_raw_entries(entries, mode=raw_dedupe)
         chunks = _chunk_entries(entries, max_input_bytes)
         for chunk_index, chunk in enumerate(chunks, start=1):
             tar_filename = _tar_name(
@@ -311,11 +498,17 @@ def package_tick_assets(
                 part=part,
                 index=chunk_index,
                 total=len(chunks),
+                archive_format=archive_format,
             )
             tar_path = output_dir / tar_filename
             input_bytes = sum(entry.size_bytes for entry in chunk)
             if not dry_run:
-                _tar_entries(tar_path, chunk)
+                _tar_entries(
+                    tar_path,
+                    chunk,
+                    archive_format=archive_format,
+                    archive_compression_level=archive_compression_level,
+                )
                 size_bytes = tar_path.stat().st_size
                 sha256 = _sha256(tar_path)
                 if size_bytes >= GITHUB_RELEASE_ASSET_LIMIT_BYTES:
@@ -337,6 +530,7 @@ def package_tick_assets(
                     "input_bytes": input_bytes,
                     "size_bytes": size_bytes,
                     "sha256": sha256,
+                    "archive_format": archive_format,
                     "sample_entries": [entry.arcname for entry in chunk[:5]],
                 }
             )
@@ -354,9 +548,13 @@ def package_tick_assets(
             "repo_root": str(root),
             "generator": {"package": "rqdata-tick-data", "version": __version__},
             "max_tar_bytes": max_tar_bytes,
+            "archive_format": archive_format,
+            "archive_compression_level": archive_compression_level,
+            "raw_dedupe": raw_dedupe,
         },
         "sources": sources_summary,
         "missing_sources": all_missing,
+        "dedupe": dedupe_summary,
         "tar_dir": str(output_dir),
         "tarballs": tarballs,
     }
@@ -394,9 +592,9 @@ def upload_release_assets(
     tar_root = Path(tar_dir).expanduser().resolve()
     if not tar_root.exists():
         raise FileNotFoundError(f"tar-dir not found: {tar_root}")
-    tarballs = sorted(tar_root.glob("*.tar.gz"))
+    tarballs = _archive_files(tar_root)
     if not tarballs:
-        raise ValueError(f"No .tar.gz files found in {tar_root}")
+        raise ValueError(f"No supported archive files found in {tar_root}")
     if not dry_run and shutil.which("gh") is None:
         raise RuntimeError("GitHub CLI (gh) not found in PATH.")
 

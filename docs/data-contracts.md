@@ -127,19 +127,25 @@ manifest.yml
 manifest.json
 README.md
 <name>_<as_of>_release_notes.txt
-<name>-<as_of>-raw-part001.tar.gz
-<name>-<as_of>-daily.tar.gz
-<name>-<as_of>-metadata.tar.gz
-<name>-<as_of>-reports.tar.gz
-<name>-<as_of>-configs.tar.gz
+<name>-<as_of>-raw-part001.<ext>
+<name>-<as_of>-daily.<ext>
+<name>-<as_of>-metadata.<ext>
+<name>-<as_of>-reports.<ext>
+<name>-<as_of>-configs.<ext>
 ```
 
 `manifest.yml` 记录：
 
 - 分发名称、`as_of`、生成时间和 generator 版本。
+- archive 格式、压缩等级、raw 去重模式。
 - 被选中的 source paths 和缺失 source paths。
 - 每个 tarball 的 part、chunk 序号、输入字节数、压缩后字节数、文件数和 `sha256`。
 - 每个 tarball 的前几个 archive entry，便于快速确认路径布局。
+
+`<ext>` 默认为 `tar.gz`，也可为 `tar.zst` 或 `tar`。启用 `raw_dedupe=symbol-date`
+时，raw parquet part 会按 `trade_date + order_book_id` 分组，manifest 的 `dedupe.raw`
+记录候选、保留和丢弃数量以及样例。重复候选按文件修改时间、文件大小和 archive path
+排序后选择保留项。
 
 tarball 内部路径以 part 为第一层，例如 `raw/<source_name>/...`、`daily/<source_name>/...`
 和 config part 下的 `<source_name>/...`。恢复时先解压到工作目录，再把研究或检查命令指向解压后的

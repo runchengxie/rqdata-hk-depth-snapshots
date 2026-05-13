@@ -93,6 +93,10 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 已有 raw cache 可用 `rqdata-tick recompress-raw --input OLD --output NEW` 无损迁移到新的
 parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 
+冷存储备份可先用 `recompress-raw --compression zstd --compression-level 12` 生成高压缩
+raw 副本，再用 `package-assets --archive-format tar.zst --archive-compression-level 12
+--raw-dedupe symbol-date` 显式打包该副本，减少重复 raw part 和外层 archive 体积。
+
 ## 文档
 
 详细文档从 [docs/README.md](docs/README.md) 开始：

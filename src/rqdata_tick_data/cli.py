@@ -24,8 +24,11 @@ from rqdata_tick_data.reconcile import (
     write_reconciliation_report,
 )
 from rqdata_tick_data.release_assets import (
+    ARCHIVE_FORMATS,
+    DEFAULT_ARCHIVE_FORMAT,
     DEFAULT_MAX_TAR_BYTES,
     PART_NAMES,
+    RAW_DEDUPE_MODES,
     package_tick_assets,
     upload_release_assets,
 )
@@ -152,6 +155,13 @@ def build_parser() -> argparse.ArgumentParser:
     package_assets.add_argument("--report-source", action="append", default=[])
     package_assets.add_argument("--config-source", action="append", default=[])
     package_assets.add_argument("--max-tar-bytes", type=int, default=DEFAULT_MAX_TAR_BYTES)
+    package_assets.add_argument(
+        "--archive-format",
+        choices=ARCHIVE_FORMATS,
+        default=DEFAULT_ARCHIVE_FORMAT,
+    )
+    package_assets.add_argument("--archive-compression-level", type=int)
+    package_assets.add_argument("--raw-dedupe", choices=RAW_DEDUPE_MODES, default="none")
 
     release_assets = subparsers.add_parser(
         "release-assets",
@@ -322,6 +332,9 @@ def _handle_package_assets(args: argparse.Namespace, provider: TickDataProvider 
         config_sources=args.config_source,
         parts=args.part,
         max_tar_bytes=args.max_tar_bytes,
+        archive_format=args.archive_format,
+        archive_compression_level=args.archive_compression_level,
+        raw_dedupe=args.raw_dedupe,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
     )

@@ -190,8 +190,8 @@ rqdata-tick emit-asset \
 
 ## `package-assets`
 
-将本地 tick-depth 数据、聚合结果、报告、配置和记录打成可搬运的 `.tar.gz` 分包。
-单个 tarball 默认控制在 GitHub Release asset 限制以下。
+将本地 tick-depth 数据、聚合结果、报告、配置和记录打成可搬运的 archive 分包。
+默认输出 `.tar.gz`；冷存储可选择 `.tar.zst` 并启用 raw symbol-date 去重。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -208,6 +208,9 @@ rqdata-tick emit-asset \
 | `--report-source` | 空 | 额外 report 路径；可重复 |
 | `--config-source` | 空 | 额外 config 或 universe 路径；可重复 |
 | `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分 |
+| `--archive-format` | `tar.gz` | 输出格式：`tar.gz`、`tar.zst` 或 `tar` |
+| `--archive-compression-level` | 空 | archive 压缩等级；`tar.gz` 支持 `1-9`，`tar.zst` 支持 `1-22` |
+| `--raw-dedupe` | `none` | raw part 去重模式；`symbol-date` 对 `trade_date + order_book_id` 只保留一个 parquet part |
 
 示例：
 
@@ -217,6 +220,24 @@ rqdata-tick package-assets \
   --name hk_tick_depth_current \
   --as-of 20260509 \
   --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --overwrite
+```
+
+冷存储可先用 `recompress-raw` 生成高等级 zstd parquet 副本，再显式选择冷副本打 `.tar.zst`：
+
+```bash
+rqdata-tick package-assets \
+  --name hk_tick_depth_cold \
+  --as-of 20260509 \
+  --tar-dir artifacts/releases/hk_tick_depth_cold_20260509_tarballs \
+  --raw-source artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
+  --daily-source artifacts/cache/rqdata/hk_tick_depth_daily \
+  --metadata-source docs/records \
+  --report-source artifacts/reports \
+  --config-source path/to/universe_config \
+  --archive-format tar.zst \
+  --archive-compression-level 12 \
+  --raw-dedupe symbol-date \
   --overwrite
 ```
 
@@ -234,7 +255,7 @@ rqdata-tick package-assets \
 
 ## `release-assets`
 
-把 `package-assets` 生成的 `.tar.gz` 文件上传到 GitHub Release。该命令依赖本机
+把 `package-assets` 生成的 archive 文件上传到 GitHub Release。该命令依赖本机
 GitHub CLI `gh`，并且只处理已有 tarball 目录。
 
 | 参数 | 默认值 | 说明 |

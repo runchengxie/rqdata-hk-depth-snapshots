@@ -154,7 +154,7 @@ asset 目录契约见 [数据契约](data-contracts.md)。
 
 ## 8. Package Assets
 
-`package-assets` 把本地 raw cache、日频聚合、报告、配置和记录打成本地 `.tar.gz`
+`package-assets` 把本地 raw cache、日频聚合、报告、配置和记录打成本地 archive
 分包。默认推荐先保留本地 tarball；上传 GitHub Release 时再显式运行 `release-assets`。
 
 ```bash
@@ -176,6 +176,32 @@ rqdata-tick package-assets \
   --daily-source artifacts/assets/rqdata/hk/tick_depth_daily/core \
   --metadata-source docs/records \
   --config-source path/to/universe_config
+```
+
+冷存储可以把 raw cache 先无损重编码到更高等级 parquet zstd，再用 `.tar.zst` 打包：
+
+```bash
+rqdata-tick recompress-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth \
+  --output artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
+  --compression zstd \
+  --compression-level 12 \
+  --resume \
+  --continue-on-error
+
+rqdata-tick package-assets \
+  --name hk_tick_depth_cold \
+  --as-of 20260509 \
+  --tar-dir artifacts/releases/hk_tick_depth_cold_20260509_tarballs \
+  --raw-source artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
+  --daily-source artifacts/cache/rqdata/hk_tick_depth_daily \
+  --metadata-source docs/records \
+  --report-source artifacts/reports \
+  --config-source path/to/universe_config \
+  --archive-format tar.zst \
+  --archive-compression-level 12 \
+  --raw-dedupe symbol-date \
+  --overwrite
 ```
 
 生成的 `manifest.yml` 记录每个 tarball 的 `sha256`、字节数、part 和样例 entry。
