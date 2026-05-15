@@ -87,11 +87,14 @@ def test_recompress_raw_cli(tmp_path, capsys) -> None:
             str(source),
             "--output",
             str(output),
+            "--progress",
         ]
     )
 
     assert code == 0
-    payload = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
     assert payload["status"] == "pass"
     assert payload["rewritten_parts"] == 2
+    assert "recompress-raw" in captured.err
     assert {row["compression"] for row in scan_raw_coverage(output)} == {"zstd"}

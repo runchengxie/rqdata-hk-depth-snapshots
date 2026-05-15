@@ -159,6 +159,7 @@ def test_package_assets_cli_and_release_assets_dry_run(tmp_path: Path) -> None:
                 str(raw),
                 "--part",
                 "raw",
+                "--progress",
             ]
         )
         == 0

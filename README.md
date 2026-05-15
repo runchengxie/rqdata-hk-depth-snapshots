@@ -95,7 +95,8 @@ parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 
 冷存储备份可先用 `recompress-raw --compression zstd --compression-level 12` 生成高压缩
 raw 副本，再用 `package-assets --archive-format tar.zst --archive-compression-level 12
---raw-dedupe symbol-date` 显式打包该副本，减少重复 raw part 和外层 archive 体积。
+--raw-dedupe symbol-date --progress` 显式打包该副本，减少重复 raw part 和外层 archive 体积。
+Release 上传前保持单个 archive 小于 2GiB；默认分包上限为 `1900000000` bytes。
 
 ## 文档
 

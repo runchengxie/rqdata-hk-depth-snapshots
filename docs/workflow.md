@@ -187,7 +187,8 @@ rqdata-tick recompress-raw \
   --compression zstd \
   --compression-level 12 \
   --resume \
-  --continue-on-error
+  --continue-on-error \
+  --progress
 
 rqdata-tick package-assets \
   --name hk_tick_depth_cold \
@@ -198,9 +199,11 @@ rqdata-tick package-assets \
   --metadata-source docs/records \
   --report-source artifacts/reports \
   --config-source path/to/universe_config \
+  --max-tar-bytes 1900000000 \
   --archive-format tar.zst \
   --archive-compression-level 12 \
   --raw-dedupe symbol-date \
+  --progress \
   --overwrite
 ```
 

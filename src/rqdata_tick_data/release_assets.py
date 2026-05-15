@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from rqdata_tick_data import __version__
+from rqdata_tick_data.progress import ProgressBar
 from rqdata_tick_data.storage import parse_symbol_date_part_path, write_json, write_yaml
 
 GITHUB_RELEASE_ASSET_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
@@ -209,9 +210,16 @@ def _validate_archive_options(
         raise ValueError("--archive-compression-level for tar.zst must be between 1 and 22.")
 
 
-def _add_entries_to_tar(tar: tarfile.TarFile, entries: list[PackageEntry]) -> None:
+def _add_entries_to_tar(
+    tar: tarfile.TarFile,
+    entries: list[PackageEntry],
+    *,
+    progress_bar: ProgressBar | None = None,
+) -> None:
     for entry in entries:
         tar.add(entry.source, arcname=entry.arcname, recursive=False)
+        if progress_bar is not None:
+            progress_bar.update(bytes_done=entry.size_bytes, suffix=entry.arcname)
 
 
 def _tar_zst_entries(
@@ -219,6 +227,7 @@ def _tar_zst_entries(
     entries: list[PackageEntry],
     *,
     archive_compression_level: int | None,
+    progress_bar: ProgressBar | None = None,
 ) -> None:
     binary = shutil.which("zstd")
     if binary is None:
@@ -237,7 +246,7 @@ def _tar_zst_entries(
         raise RuntimeError("Failed to open zstd stdin.")
     try:
         with tarfile.open(fileobj=process.stdin, mode="w|") as tar:
-            _add_entries_to_tar(tar, entries)
+            _add_entries_to_tar(tar, entries, progress_bar=progress_bar)
         process.stdin.close()
         returncode = process.wait()
     except Exception:
@@ -255,6 +264,7 @@ def _tar_entries(
     *,
     archive_format: str,
     archive_compression_level: int | None,
+    progress_bar: ProgressBar | None = None,
 ) -> None:
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     if tar_path.exists():
@@ -264,16 +274,17 @@ def _tar_entries(
         if archive_compression_level is not None:
             kwargs["compresslevel"] = archive_compression_level
         with tarfile.open(tar_path, "w:gz", **kwargs) as tar:
-            _add_entries_to_tar(tar, entries)
+            _add_entries_to_tar(tar, entries, progress_bar=progress_bar)
     elif archive_format == "tar.zst":
         _tar_zst_entries(
             tar_path,
             entries,
             archive_compression_level=archive_compression_level,
+            progress_bar=progress_bar,
         )
     elif archive_format == "tar":
         with tarfile.open(tar_path, "w") as tar:
-            _add_entries_to_tar(tar, entries)
+            _add_entries_to_tar(tar, entries, progress_bar=progress_bar)
     else:
         raise ValueError(f"Unknown archive format: {archive_format}")
 
@@ -349,6 +360,104 @@ def _dedupe_raw_entries(
         "sample_dropped_entries": dropped_samples,
     }
     return deduped, report
+
+
+def _package_chunk(
+    *,
+    output_dir: Path,
+    name: str,
+    as_of: str,
+    part: str,
+    chunk: list[PackageEntry],
+    chunk_index: int,
+    chunk_count: int,
+    archive_format: str,
+    archive_compression_level: int | None,
+    dry_run: bool,
+    progress: bool,
+) -> dict[str, Any]:
+    tar_filename = _tar_name(
+        name=name,
+        as_of=as_of,
+        part=part,
+        index=chunk_index,
+        total=chunk_count,
+        archive_format=archive_format,
+    )
+    tar_path = output_dir / tar_filename
+    input_bytes = sum(entry.size_bytes for entry in chunk)
+    if not dry_run:
+        progress_bar = ProgressBar(
+            label=f"package {part} {chunk_index}/{chunk_count}",
+            total_units=len(chunk),
+            total_bytes=input_bytes,
+            enabled=progress,
+        )
+        try:
+            _tar_entries(
+                tar_path,
+                chunk,
+                archive_format=archive_format,
+                archive_compression_level=archive_compression_level,
+                progress_bar=progress_bar,
+            )
+        finally:
+            progress_bar.close(suffix=tar_filename)
+        size_bytes = tar_path.stat().st_size
+        sha256 = _sha256(tar_path)
+        if size_bytes >= GITHUB_RELEASE_ASSET_LIMIT_BYTES:
+            raise ValueError(
+                f"Tarball exceeds GitHub release asset limit: {tar_path} "
+                f"({size_bytes} bytes). Use a smaller --max-tar-bytes value."
+            )
+    else:
+        size_bytes = 0
+        sha256 = ""
+    return {
+        "file": tar_filename,
+        "path": str(tar_path),
+        "part": part,
+        "chunk_index": chunk_index,
+        "chunk_count": chunk_count,
+        "entry_count": len(chunk),
+        "input_bytes": input_bytes,
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+        "archive_format": archive_format,
+        "sample_entries": [entry.arcname for entry in chunk[:5]],
+    }
+
+
+def _package_chunks(
+    *,
+    output_dir: Path,
+    name: str,
+    as_of: str,
+    part: str,
+    entries: list[PackageEntry],
+    max_input_bytes: int,
+    archive_format: str,
+    archive_compression_level: int | None,
+    dry_run: bool,
+    progress: bool,
+) -> list[dict[str, Any]]:
+    chunks = _chunk_entries(entries, max_input_bytes)
+    return [
+        _package_chunk(
+            output_dir=output_dir,
+            name=name,
+            as_of=as_of,
+            part=part,
+            chunk=chunk,
+            chunk_index=chunk_index,
+            chunk_count=len(chunks),
+            archive_format=archive_format,
+            archive_compression_level=archive_compression_level,
+            dry_run=dry_run,
+            progress=progress,
+        )
+        for chunk_index, chunk in enumerate(chunks, start=1)
+    ]
 
 
 def _sha256(path: Path) -> str:
@@ -429,6 +538,7 @@ def package_tick_assets(
     archive_format: str = DEFAULT_ARCHIVE_FORMAT,
     archive_compression_level: int | None = None,
     raw_dedupe: str = "none",
+    progress: bool = False,
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -490,50 +600,20 @@ def package_tick_assets(
         sources_summary[part] = [str(path) for path in source_map.get(part, [])]
         if part == "raw":
             entries, dedupe_summary[part] = _dedupe_raw_entries(entries, mode=raw_dedupe)
-        chunks = _chunk_entries(entries, max_input_bytes)
-        for chunk_index, chunk in enumerate(chunks, start=1):
-            tar_filename = _tar_name(
+        tarballs.extend(
+            _package_chunks(
+                output_dir=output_dir,
                 name=name,
                 as_of=selected_as_of,
                 part=part,
-                index=chunk_index,
-                total=len(chunks),
+                entries=entries,
+                max_input_bytes=max_input_bytes,
                 archive_format=archive_format,
+                archive_compression_level=archive_compression_level,
+                dry_run=dry_run,
+                progress=progress,
             )
-            tar_path = output_dir / tar_filename
-            input_bytes = sum(entry.size_bytes for entry in chunk)
-            if not dry_run:
-                _tar_entries(
-                    tar_path,
-                    chunk,
-                    archive_format=archive_format,
-                    archive_compression_level=archive_compression_level,
-                )
-                size_bytes = tar_path.stat().st_size
-                sha256 = _sha256(tar_path)
-                if size_bytes >= GITHUB_RELEASE_ASSET_LIMIT_BYTES:
-                    raise ValueError(
-                        f"Tarball exceeds GitHub release asset limit: {tar_path} "
-                        f"({size_bytes} bytes). Use a smaller --max-tar-bytes value."
-                    )
-            else:
-                size_bytes = 0
-                sha256 = ""
-            tarballs.append(
-                {
-                    "file": tar_filename,
-                    "path": str(tar_path),
-                    "part": part,
-                    "chunk_index": chunk_index,
-                    "chunk_count": len(chunks),
-                    "entry_count": len(chunk),
-                    "input_bytes": input_bytes,
-                    "size_bytes": size_bytes,
-                    "sha256": sha256,
-                    "archive_format": archive_format,
-                    "sample_entries": [entry.arcname for entry in chunk[:5]],
-                }
-            )
+        )
 
     if not tarballs:
         raise ValueError("No files selected for packaging.")

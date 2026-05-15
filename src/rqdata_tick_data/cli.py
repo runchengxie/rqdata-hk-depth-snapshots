@@ -128,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument("--continue-on-error", action="store_true")
     recompress.add_argument("--meta-output")
     recompress.add_argument("--out-units")
+    recompress.add_argument("--progress", action="store_true")
 
     asset = subparsers.add_parser("emit-asset", help="Emit an asset-compatible directory.")
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
@@ -162,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     package_assets.add_argument("--archive-compression-level", type=int)
     package_assets.add_argument("--raw-dedupe", choices=RAW_DEDUPE_MODES, default="none")
+    package_assets.add_argument("--progress", action="store_true")
 
     release_assets = subparsers.add_parser(
         "release-assets",
@@ -303,6 +305,7 @@ def _handle_recompress_raw(args: argparse.Namespace, provider: TickDataProvider 
         continue_on_error=args.continue_on_error,
         meta_output=args.meta_output,
         units_output=args.out_units,
+        progress=args.progress,
     )
     _print_json(metadata)
     return 0 if metadata["status"] == "pass" else 1
@@ -335,6 +338,7 @@ def _handle_package_assets(args: argparse.Namespace, provider: TickDataProvider 
         archive_format=args.archive_format,
         archive_compression_level=args.archive_compression_level,
         raw_dedupe=args.raw_dedupe,
+        progress=args.progress,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
     )

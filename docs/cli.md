@@ -158,6 +158,7 @@ rqdata-tick aggregate-daily \
 | `--continue-on-error` | `false` | 单分片失败后继续处理后续分片 |
 | `--meta-output` | 空 | migration metadata JSON 输出路径 |
 | `--out-units` | 空 | part 级 audit CSV 输出路径 |
+| `--progress` | `false` | 在 stderr 显示 part/字节进度条 |
 
 示例：
 
@@ -166,7 +167,8 @@ rqdata-tick recompress-raw \
   --input artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506 \
   --output artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506_zstd3 \
   --compression zstd \
-  --compression-level 3
+  --compression-level 3 \
+  --progress
 ```
 
 ## `emit-asset`
@@ -207,10 +209,11 @@ rqdata-tick emit-asset \
 | `--metadata-source` | 空 | 额外 metadata 或记录路径；可重复 |
 | `--report-source` | 空 | 额外 report 路径；可重复 |
 | `--config-source` | 空 | 额外 config 或 universe 路径；可重复 |
-| `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分 |
+| `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分；GitHub Release 单 asset 需小于 2GiB，网络不稳时可用 `1000000000` |
 | `--archive-format` | `tar.gz` | 输出格式：`tar.gz`、`tar.zst` 或 `tar` |
 | `--archive-compression-level` | 空 | archive 压缩等级；`tar.gz` 支持 `1-9`，`tar.zst` 支持 `1-22` |
 | `--raw-dedupe` | `none` | raw part 去重模式；`symbol-date` 对 `trade_date + order_book_id` 只保留一个 parquet part |
+| `--progress` | `false` | 在 stderr 显示 archive 写入进度条 |
 
 示例：
 
@@ -238,6 +241,7 @@ rqdata-tick package-assets \
   --archive-format tar.zst \
   --archive-compression-level 12 \
   --raw-dedupe symbol-date \
+  --progress \
   --overwrite
 ```
 
