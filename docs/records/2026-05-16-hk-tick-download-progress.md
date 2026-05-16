@@ -1,7 +1,8 @@
 # 港股 Tick 下载进展：2026-05-16
 
-状态：补齐 Core200 最新增量，收口 Core300 `rank201..230` partial，并推进
-Core300 `rank231..260` 到 95% quota guard 截停点。
+状态：补齐 Core200 最新增量，收口 Core300 `rank201..230` partial，完成
+Core300 `rank231..260`，并用 99.5% quota guard 推进 Core300 `rank261..300`
+partial。
 
 记录日期：2026-05-16。
 
@@ -78,3 +79,55 @@ Core200 已补齐到 `2026-05-15`。Core300 `rank201..230` 已覆盖到
 `2026-05-15`。Core300 `rank231..260` 已覆盖到 `2026-04-22`，部分标的额外覆盖
 到 `2026-04-23`；`2026-04-23/24` 到 `2026-05-15` 的 458 个 symbol-date 单元
 等待下一次 quota 重置后 resume。
+
+## 追加下载：99.5% guard
+
+用户要求继续下载最有价值的数据直到 99.5% 流量上限。本轮按流动性顺序处理：
+
+1. Resume Core300 `rank231..260`，补齐前一轮被 95% guard 拦住的最新缺口。
+2. 在 `rank231..260` 完整后，启动下一档 Core300 `rank261..300` 历史 partial。
+
+两轮均使用 `symbol-date` raw layout、`zstd` level 3 parquet、provider 交易日历、
+`--resume`、`--continue-on-error`、`batch_size=1`、`--quota-stop-ratio 0.995`
+和 `--quota-safety-multiplier 1.2`。
+
+| 数据集 | 标的数 | 目标窗口 | written | empty remote | skipped existing | quota blocked | raw rows | health | daily rows |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| Core300 `rank231..260` resume | 30 | `2025-04-01` 到 `2026-05-15` | 458 | 437 | 7,355 | 0 | 960,697 new rows / 16,043,652 total | pass | 7,813 |
+| Core300 `rank261..300` partial | 40 | `2025-04-01` 到 `2026-05-15` | 112 | 35 | 0 | 10,853 | 223,010 | pass | 112 |
+
+Run records:
+
+| 数据集 | metadata | audit |
+| --- | --- | --- |
+| Core300 `rank231..260` resume | `artifacts/cache/rqdata/hk_tick_depth/core300_rank231_260_20250401_20260515/meta/download_20260516_151021.json` | `artifacts/cache/rqdata/hk_tick_depth/core300_rank231_260_20250401_20260515/audit/download_20260516_150926_7f784103.csv` |
+| Core300 `rank261..300` partial | `artifacts/cache/rqdata/hk_tick_depth/core300_rank261_300_20250401_20260515/meta/download_20260516_151447.json` | `artifacts/cache/rqdata/hk_tick_depth/core300_rank261_300_20250401_20260515/audit/download_20260516_151447_96cd2322.csv` |
+
+质量与聚合输出：
+
+| 数据集 | health report | daily aggregate |
+| --- | --- | --- |
+| Core300 `rank231..260` full | `artifacts/reports/tick_health_core300_rank231_260_20250401_20260515.json` | `artifacts/cache/rqdata/hk_tick_depth_daily/core300_rank231_260_20250401_20260515/data.parquet` |
+| Core300 `rank261..300` partial | `artifacts/reports/tick_health_core300_rank261_300_20250401_20260515_partial.json` | `artifacts/cache/rqdata/hk_tick_depth_daily/core300_rank261_300_20250401_20260515_partial/data.parquet` |
+
+两份 health 报告均为 `status=pass`，无 warning 或 failure。
+
+追加后最终 quota 查询结果：
+
+| 项 | 值 |
+| --- | ---: |
+| license type | TRIAL |
+| remaining days | 10 |
+| bytes used | 1017.84MB |
+| bytes remaining | 6.16MB |
+| used pct | 99.40% |
+
+`rank261..300` 在 99.5% guard 下正常截停。截停时下一单安全估算为 3,693,151
+bytes；继续请求会越过 99.5% 阈值，因此保留 0.10 个百分点左右的安全余量。
+
+追加后的覆盖状态：
+
+- Core300 `rank231..260` 已完整覆盖 `2025-04-01` 到 `2026-05-15`。
+- Core300 `rank261..300` 已启动 partial，当前覆盖到 `2025-04-07`，其中 112 个
+  非空 symbol-date 单元已聚合；剩余 10,853 个 symbol-date 单元等待下一次 quota
+  重置后 resume。
