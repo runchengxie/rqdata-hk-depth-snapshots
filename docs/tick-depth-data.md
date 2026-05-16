@@ -1,7 +1,7 @@
 # Tick-depth 数据说明
 
-本页说明本项目下载的 RQData 港股历史 tick-depth 数据是什么、不是什麽，以及它适合
-形成哪些研究特征。文件布局、metadata、audit 和 asset 契约见
+本页说明本项目下载的 RQData 港股历史 tick-depth 数据定位、覆盖边界和适合派生的研究
+特征。文件布局、metadata、audit 和 asset 契约见
 [数据契约](data-contracts.md)；质量门禁见 [质量门禁](quality-gates.md)。
 
 ## 数据定位
@@ -12,8 +12,8 @@
 某标的、某交易日、某时间戳的一次盘口状态
 ```
 
-它可以理解为“带累计成交字段的十档 quote snapshot”。它不是逐笔订单流，也不是逐笔
-成交流。
+它可以理解为“带累计成交字段的十档 quote snapshot”。逐笔订单流、逐笔成交流和订单簿
+重建需要其他数据源。
 
 | 类别 | 本项目是否覆盖 | 说明 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ raw parquet 默认字段来自 `DEFAULT_TICK_DEPTH_FIELDS`：
 | 买盘十档 | `b1-b10`、`b1_v-b10_v` | 最优到第十档买价及对应挂单量 |
 
 注意：`volume` 和 `total_turnover` 是累计量。项目在计算 VWAP 时使用相邻快照差分来
-近似增量成交，但这仍不是逐笔成交明细。
+近似增量成交；该近似不能提供逐笔成交明细。
 
 ## 已落地的日频特征
 
@@ -79,7 +79,7 @@ raw parquet 默认字段来自 `DEFAULT_TICK_DEPTH_FIELDS`：
 
 ## 策略研究思路
 
-这些数据更适合做“流动性、交易成本和短周期盘口状态”研究；订单流重建不在适用范围内。
+这些数据更适合做“流动性、交易成本和短周期盘口状态”研究；订单流重建需要逐笔事件数据。
 
 可考虑的方向：
 
@@ -92,7 +92,7 @@ raw parquet 默认字段来自 `DEFAULT_TICK_DEPTH_FIELDS`：
 - 事件过滤器：财报、指数调整或南向资金活跃日中，用 depth 和 spread 判断是否放大或
   收缩交易。
 
-## 不能支持的研究
+## 需其他数据源的研究
 
 以下研究需要逐笔成交或 order event 数据，本项目 raw snapshot 不足以严谨支持：
 
@@ -110,9 +110,10 @@ order-flow 或 trade-print 指标。
 使用这些特征做量化研究时，至少需要控制：
 
 - Point-in-time：同日全日聚合特征不能用于同日盘前决策；需要 lag 或按决策时间切片。
-- Universe 偏差：当前 add-on 池是按 `2026-05-06` active stock-connect 和近期成交额选出，
-  不是历史 point-in-time universe。
-- 覆盖范围：当前账号历史 tick 权限从 `2025-04-01` 开始；更早日期的空返回不代表市场无数据。
+- Universe 偏差：按某一执行日期选出的 universe 需要标注选择日期和排名窗口；历史
+  point-in-time universe 需要额外维护成分和生效时间。
+- 覆盖范围：账号权限窗口、provider 空返回比例和下载覆盖属于 dated facts，以
+  [执行记录](records/) 和本地 metadata / audit 为准。
 - Empty remote：`empty_remote` 可能来自未上市、停牌、provider 无返回或权限行为，需要结合
   instrument 和 daily reference 解释。
 - 质量标记：研究默认先筛 `is_usable_for_research=true`；成本模型应更严格筛

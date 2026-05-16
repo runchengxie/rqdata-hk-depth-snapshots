@@ -35,11 +35,8 @@ uv sync --extra rqdata --group dev
 
 ## 认证
 
-`RQDataClient` 会先调用 `python-dotenv` 的 `load_dotenv()`，再读取环境变量。可使用本地 `rqdatac` 配置，也可复制样例文件：
-
-```bash
-cp .env.example .env
-```
+`RQDataClient` 会先调用 `python-dotenv` 的 `load_dotenv()`，再读取环境变量。可以使用本地
+`rqdatac` 配置，也可以把变量放在本机 shell 环境或未提交版本控制的 `.env` 中。
 
 支持变量：
 

@@ -2,13 +2,15 @@
 
 本项目用于探查、下载、校验、对账、聚合和输出 RQData 港股历史 tick-depth 快照数据。
 
-项目边界：
+支持范围：
 
 - 处理历史 tick-depth 快照。
-- 排除订单簿重建。
-- 排除逐笔订单事件处理。
-- 排除队列位置模拟。
-- 排除实盘交易执行。
+- 校验 raw tick 数据质量。
+- 聚合日频研究特征。
+- 对账外部日频 reference asset。
+- 输出可发布或交付的 asset 目录和本地备份分包。
+
+订单簿重建、逐笔订单事件、逐笔成交明细、队列位置模拟和实盘交易执行需要其他数据源或系统。
 
 核心流程：
 
@@ -65,14 +67,9 @@ rqdata-tick aggregate-daily \
 
 ## 真实 RQData
 
-安装 live 依赖后，使用本地 `rqdatac` 配置，或复制环境变量样例：
-
-```bash
-cp .env.example .env
-```
-
-`.env` 可配置 `RQDATA_USERNAME`、兼容变量 `RQDATA_USER`、`RQDATA_PASSWORD` 和
-`RQDATA_URI`。`RQDataClient` 会通过 `python-dotenv` 自动读取。
+安装 live 依赖后，使用本地 `rqdatac` 配置，或在本机 shell / `.env` 中设置
+`RQDATA_USERNAME`、兼容变量 `RQDATA_USER`、`RQDATA_PASSWORD` 和 `RQDATA_URI`。
+`RQDataClient` 会通过 `python-dotenv` 自动读取本地 `.env`。
 
 线上下载前先检查 quota：
 
@@ -114,5 +111,5 @@ Release 上传前保持单个 archive 小于 2GiB；默认分包上限为 `19000
 - [RQData API 使用摘要与快照](docs/vendor/)
 
 低频量化研究建议使用 `aggregate-daily` 产物，并对同日聚合特征做 lag 或严格
-point-in-time 控制。raw tick parquet 是带累计成交字段的十档盘口快照，不是逐笔订单
-或逐笔成交数据；主要用于审计、质量门禁、样本校准和重新聚合。
+point-in-time 控制。raw tick parquet 是带累计成交字段的十档盘口快照，主要用于审计、
+质量门禁、样本校准和重新聚合。逐笔订单、逐笔成交和订单簿重建需要其他数据源。

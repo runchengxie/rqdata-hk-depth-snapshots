@@ -1,18 +1,31 @@
 # 文档索引
 
-本目录按读者任务和 tick-depth 工作流组织文档。根目录 `README.md` 只保留项目入口信息；这里放完整操作说明、数据契约、质量规则和维护约束。
+本目录按读者任务和 tick-depth 工作流组织文档。根目录 `README.md` 保留项目入口信息；
+这里放完整操作说明、数据契约、质量规则和维护约束。
 
-| 任务 | 页面 |
+## 推荐阅读路径
+
+| 场景 | 阅读顺序 |
 | --- | --- |
-| 快速查命令和参数 | [CLI 参考](cli.md) |
-| 跑完整流程 | [工作流](workflow.md) |
-| 理解 tick-depth 数据语义、可派生特征和策略边界 | [Tick-depth 数据说明](tick-depth-data.md) |
-| 理解 raw cache、metadata、audit、asset 和备份输出 | [数据契约](data-contracts.md) |
-| 判断数据质量和对账结果 | [质量门禁](quality-gates.md) |
-| 配置 FakeProvider 或真实 RQData | [RQData Provider](providers-rqdata.md) |
-| 运行测试、lint、维护脚本 | [开发与维护](development.md) |
-| 统一术语 | [术语表](terminology.md) |
-| 查看带日期的 quota、下载、覆盖记录 | [执行记录](records/) |
-| 查看 RQData API 使用摘要和外部快照 | [Vendor 参考](vendor/) |
+| 首次了解项目 | [工作流](workflow.md) -> [Tick-depth 数据说明](tick-depth-data.md) -> [术语表](terminology.md) |
+| 日常运行下载 | [RQData Provider](providers-rqdata.md) -> [工作流](workflow.md) -> [CLI 参考](cli.md) |
+| 验收数据质量 | [质量门禁](quality-gates.md) -> [数据契约](data-contracts.md) -> [执行记录](records/) |
+| 发布或归档资产 | [数据契约](data-contracts.md) -> [CLI 参考](cli.md) -> [工作流](workflow.md) |
+| 维护代码和文档 | [开发与维护](development.md) -> [维护债清单](internal/maintenance-debt-inventory.md) |
 
-稳定文档描述长期规则；`records/` 目录保存某一日期的账号、quota、provider 行为和执行结果。
+## 页面分工
+
+| 页面 | 内容 |
+| --- | --- |
+| [CLI 参考](cli.md) | 命令、参数和可复制示例 |
+| [工作流](workflow.md) | probe、download、health、aggregate、reconcile、emit 和 package 的主流程 |
+| [Tick-depth 数据说明](tick-depth-data.md) | 数据语义、可派生特征、研究边界和回测注意事项 |
+| [数据契约](data-contracts.md) | raw cache、metadata、audit、asset、tarball 和低内存约束 |
+| [质量门禁](quality-gates.md) | health、aggregate quality flags、reconcile policy 和 severity |
+| [RQData Provider](providers-rqdata.md) | FakeProvider、RQDataClient、认证、quota 和 live smoke |
+| [开发与维护](development.md) | 测试、lint、环境变量、文档契约测试和维护工具 |
+| [术语表](terminology.md) | 项目内固定术语 |
+| [执行记录](records/) | 带日期的账号、quota、provider 行为、下载覆盖和执行结果 |
+| [Vendor 参考](vendor/) | RQData API 使用摘要和外部快照 |
+
+稳定文档描述长期规则；`records/` 保存某一日期的账号、quota、provider 行为和执行结果。

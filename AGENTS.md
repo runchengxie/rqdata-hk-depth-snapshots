@@ -1,84 +1,88 @@
 # AGENTS.md
 
-## Project Scope
+## 项目范围
 
-This project probes, downloads, validates, reconciles, aggregates, and emits RQData Hong Kong historical tick-depth snapshot data.
+本项目用于探查、下载、校验、对账、聚合和输出 RQData 港股历史 tick-depth 快照数据。
 
-Project boundaries:
+支持范围：
 
-- It handles historical tick-depth snapshots.
-- It does not rebuild order books.
-- It does not process order-event streams.
-- It does not simulate queue position.
-- It does not provide live trading execution.
+- 历史 tick-depth 快照。
+- raw tick 数据质量检查。
+- raw tick 到日频研究特征的聚合。
+- 与外部日频 reference asset 的对账。
+- raw / daily asset 输出和本地 archive 分包。
 
-## Standard Commands
+订单簿重建、order event 处理、queue position 模拟和实盘交易执行需要其他系统。
 
-Install offline development dependencies:
+## 标准命令
+
+安装离线开发依赖：
 
 ```bash
 uv sync --group dev
 ```
 
-Run offline tests:
+运行离线测试：
 
 ```bash
 uv run pytest
 ```
 
-Run lint:
+运行 lint：
 
 ```bash
 uv run ruff check .
 ```
 
-Install live RQData extras when provider access is needed:
+需要访问真实 RQData provider 时安装 live extras：
 
 ```bash
 uv sync --extra rqdata --group dev
 ```
 
-## Data Layout
+## 数据布局
 
-The default raw layout is `symbol-date`:
+默认 raw layout 是 `symbol-date`：
 
 ```text
 parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 ```
 
-The `batch` raw layout remains readable for historical compatibility. New downloads should use `symbol-date`; new `raw_layout=batch` downloads are deprecated and recorded in metadata.
+历史 `batch` raw layout 继续保持读取兼容。新下载使用 `symbol-date`；新
+`raw_layout=batch` 下载已废弃，并会记录到 metadata。
 
-## Quality Boundaries
+## 质量边界
 
-- `health` checks raw tick data quality.
-- `reconcile-daily` compares raw tick aggregates with an external daily reference asset.
-- `raw-daily` is the preferred gate reference when daily data uses the same raw quote basis.
-- `cross-clean` is for research clean asset coverage checks; numeric price or volume basis differences are recorded as `info`.
-- `aggregate-daily` creates research-oriented daily features and quality flags.
+- `health` 检查 raw tick 数据质量。
+- `reconcile-daily` 将 raw tick 聚合结果与外部日频 reference asset 对账。
+- `raw-daily` 用于同报价口径下载门禁。
+- `cross-clean` 用于研究清洗底座覆盖检查；价格、成交量或成交额口径差异记录为 `info`。
+- `aggregate-daily` 生成日频研究特征和质量标记。
 
-## Large Data And OOM Rules
+## 大数据和 OOM 规则
 
-- Treat full-period tick downloads, health scans, aggregation, reconciliation, and asset emission as long I/O tasks.
-- Keep raw layout at `symbol-date` for new downloads. It is the operational unit for resume, health diagnostics, aggregation, and low-memory scans.
-- Prefer chunk sizes around `300MB-700MB` estimated quota for live RQData runs. Use `--resume`, `--continue-on-error`, quota guard, and audit output as the progress record.
-- Before restarting a task that vanished without traceback, inspect the target output first:
+- 全周期 tick 下载、health 扫描、聚合、对账和 asset emission 都按长 I/O 任务处理。
+- 新下载保持 `symbol-date` raw layout；它是 resume、健康诊断、聚合和低内存扫描的操作单元。
+- live RQData 运行优先把单批 estimated quota 控制在 `300MB-700MB` 附近。
+- 运行时使用 `--resume`、`--continue-on-error`、quota guard 和 audit 输出作为进度记录。
+- 任务无 traceback 消失后，重启前先检查目标输出：
   - `meta/download_*.json`
   - `audit/download_*.csv`
-  - any `artifacts/reports/*.json`
+  - `artifacts/reports/*.json`
   - `free -h`
   - `dmesg -T | tail`
   - `ps -eo pid,ppid,stat,etime,pcpu,pmem,args`
-- A silent shell or Codex session disappearance should be treated as possible OOM until ruled out by logs or kernel messages.
-- Avoid ad hoc whole-cache reads of raw tick parquet directories in agents or scripts. Use the CLI/reporting entry points, which scan raw parquet parts incrementally.
-- `health`, `aggregate-daily`, `reconcile-daily`, and raw `emit-asset` should keep peak memory close to one parquet part plus compact diagnostics or daily rows.
-- For very large pools, write reports to `artifacts/reports/` and inspect the JSON/CSV outputs after completion. Do not depend on interactive stdout as the only record.
-- If a run fails during health, aggregation, reconciliation, or asset emission, reduce the task by date or symbol first and preserve the existing raw cache for resume.
+- 无声退出或 Codex session 消失先按可能 OOM 处理，直到日志或 kernel message 排除该原因。
+- 避免在 agent 或临时脚本中整目录读入 raw tick parquet cache。健康检查、聚合、对账和输出优先使用 CLI/reporting 入口。
+- `health`、`aggregate-daily`、`reconcile-daily` 和 raw `emit-asset` 的峰值内存应接近一个 parquet part 加紧凑诊断或日频行。
+- 超大池报告写到 `artifacts/reports/`，完成后检查 JSON/CSV 输出。
+- health、聚合、对账或 asset emission 失败时，先按日期或标的缩小任务，并保留已有 raw cache 供 resume 使用。
 
-## Documentation Sync Rules
+## 文档同步规则
 
-- Update README and docs when CLI arguments, output layout, metadata, audit fields, or quality checks change.
-- Keep README short and link detailed docs from `docs/`.
-- Keep dated account-specific quota, provider behavior, download coverage, or sample estimates under `docs/records/`.
-- Keep stable docs organized around `docs/workflow.md`, `docs/data-contracts.md`, `docs/quality-gates.md`, `docs/providers-rqdata.md`, and `docs/development.md`.
-- Keep copied provider API snapshots under `docs/vendor/` and avoid presenting them as project support scope.
-- Do not add secrets, local credentials, or private tokens to docs, tests, metadata examples, or code.
+- CLI 参数、输出布局、metadata、audit 字段或质量检查变化时，同步 README、docs 和文档契约测试。
+- README 保持项目入口职责，详细说明放在 `docs/`。
+- 账号 quota、provider 行为、下载覆盖和样本估算等带日期事实放在 `docs/records/`。
+- 稳定文档围绕 `docs/workflow.md`、`docs/data-contracts.md`、`docs/quality-gates.md`、`docs/providers-rqdata.md` 和 `docs/development.md` 维护。
+- 外部 provider API 快照放在 `docs/vendor/`，项目支持范围以本项目 CLI、代码和稳定文档为准。
+- 文档、测试、metadata 示例和代码中禁止写入 secrets、本地凭据或私有 token。

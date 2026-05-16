@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from rqdata_tick_data.cli import build_parser, main
 from rqdata_tick_data.storage import atomic_write_parquet
@@ -212,6 +213,17 @@ def _rqdata_client_env_vars() -> set[str]:
     return names
 
 
+def _manifest_file_nodes(node):  # noqa: ANN001
+    if isinstance(node, dict):
+        if "file" in node:
+            yield node
+        for value in node.values():
+            yield from _manifest_file_nodes(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _manifest_file_nodes(value)
+
+
 def test_markdown_internal_links_exist() -> None:
     pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
     missing: list[str] = []
@@ -242,9 +254,8 @@ def test_cli_docs_cover_parser_commands_and_options() -> None:
     assert not missing
 
 
-def test_rqdata_env_example_and_docs_match_client() -> None:
+def test_rqdata_env_vars_are_documented_without_sample_credentials() -> None:
     expected = _rqdata_client_env_vars()
-    env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     documented = "\n".join(
         [
             (REPO_ROOT / "docs/providers-rqdata.md").read_text(encoding="utf-8"),
@@ -252,13 +263,10 @@ def test_rqdata_env_example_and_docs_match_client() -> None:
             (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
         ]
     )
-    env_sample_vars = set(re.findall(r"#?\s*(RQDATA_[A-Z_]+)=", env_example))
-    extra = env_sample_vars - expected
-    missing_from_sample = expected - env_sample_vars
     missing_from_docs = sorted(name for name in expected if name not in documented)
 
-    assert not extra
-    assert not missing_from_sample
+    assert not (REPO_ROOT / ".env.example").exists()
+    assert ".env.example" not in documented
     assert not missing_from_docs
 
 
@@ -294,8 +302,18 @@ def test_readme_and_agents_required_sections() -> None:
         assert item in inventory
 
 
-def test_docs_avoid_known_contrastive_phrases() -> None:
-    banned = ("不是.*而是", "而非", "而不是", "本页不解决什么", "不作为.*而", "不直接.*而")
+def test_docs_avoid_known_contrastive_or_negating_phrases() -> None:
+    banned = (
+        "不是",
+        "而是",
+        "而非",
+        "而不是",
+        "本页不解决什么",
+        "不作为.*而",
+        "不直接.*而",
+        "什麽",
+        "什麼",
+    )
     offenders: list[str] = []
     for path in _project_authored_markdown_files():
         text = path.read_text(encoding="utf-8")
@@ -306,7 +324,7 @@ def test_docs_avoid_known_contrastive_phrases() -> None:
 
 
 def test_stable_docs_do_not_contain_local_or_dated_record_facts() -> None:
-    banned = ("/home/", "TRIAL", "1GB/day")
+    banned = ("/home/", "TRIAL", "1GB/day", "当前账号", "当前 add-on", "历史 tick 权限从")
     offenders: list[str] = []
     for path in _stable_markdown_files():
         text = path.read_text(encoding="utf-8")
@@ -314,6 +332,17 @@ def test_stable_docs_do_not_contain_local_or_dated_record_facts() -> None:
             if phrase in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {phrase}")
     assert not offenders
+
+
+def test_records_index_lists_all_dated_records() -> None:
+    records_dir = REPO_ROOT / "docs/records"
+    index = (records_dir / "README.md").read_text(encoding="utf-8")
+    missing = [
+        path.name
+        for path in sorted(records_dir.glob("*.md"))
+        if path.name != "README.md" and path.name not in index
+    ]
+    assert not missing
 
 
 def test_records_are_dated_and_mark_record_context() -> None:
@@ -343,6 +372,38 @@ def test_stable_docs_do_not_depend_on_local_configs() -> None:
         if "configs/" in text:
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders
+
+
+def test_universe_manifest_references_existing_files_and_symbol_counts() -> None:
+    universe_root = REPO_ROOT / "configs/universe/hk_tick_depth"
+    manifest = yaml.safe_load((universe_root / "manifest.yml").read_text(encoding="utf-8"))
+    nodes = list(_manifest_file_nodes(manifest))
+    listed = {str(node["file"]) for node in nodes}
+    expected_txt = {
+        path.relative_to(universe_root).as_posix() for path in universe_root.rglob("*.txt")
+    }
+    errors: list[str] = []
+
+    for node in nodes:
+        rel_path = str(node["file"])
+        path = universe_root / rel_path
+        if not path.exists():
+            errors.append(f"missing manifest file: {rel_path}")
+            continue
+        if path.suffix == ".txt" and "symbols" in node:
+            symbols = [
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+            if len(symbols) != int(node["symbols"]):
+                errors.append(
+                    f"{rel_path}: manifest symbols={node['symbols']} actual={len(symbols)}"
+                )
+
+    missing_from_manifest = sorted(expected_txt - listed)
+    errors.extend(f"unlisted symbol list: {path}" for path in missing_from_manifest)
+    assert not errors
 
 
 @pytest.mark.rqdata_live

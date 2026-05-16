@@ -45,13 +45,8 @@ live smoke 只做最小 quota 或 provider 检查。
 
 ## 环境变量
 
-真实 RQData 认证可使用 `.env.example`：
-
-```bash
-cp .env.example .env
-```
-
-`RQDataClient` 通过 `python-dotenv` 读取 `.env`。支持变量：
+真实 RQData 认证可以使用本地 `rqdatac` 配置，也可以把变量放在本机 shell 环境或未提交
+版本控制的 `.env` 中。`RQDataClient` 通过 `python-dotenv` 读取 `.env`。支持变量：
 
 - `RQDATA_USERNAME`
 - `RQDATA_USER`
@@ -68,8 +63,10 @@ cp .env.example .env
 - README 风格离线命令可用。
 - markdown 内链存在。
 - `docs/cli.md` 覆盖 parser 暴露的命令和参数。
-- `.env.example` 与 `RQDataClient` 环境变量一致。
-- 稳定文档没有本地绝对路径。
+- `RQDataClient` 环境变量已写入稳定文档，项目不依赖环境变量样例文件。
+- records 索引收录全部 dated records。
+- 稳定文档没有本地绝对路径或账号日期事实。
+- universe manifest 引用的文件存在，TXT 标的数与 manifest 一致。
 - records 带有日期和记录语境。
 - 项目文档避开绕弯对比句式。
 
