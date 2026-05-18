@@ -14,8 +14,9 @@
 - Core300 `rank261..300` 已完整覆盖 `2025-04-01` 到 `2026-05-15`。
 - Core400 candidate `rank301..340` 已完整覆盖 `2025-04-01` 到 `2026-05-15`。
 - Core400 candidate `rank341..380` 已完整覆盖 `2025-04-01` 到 `2026-05-15`。
-- Core400 candidate `rank381..400` 已完整覆盖到 `2026-04-24`，后续单元等待
-  quota 重置后 resume。
+- Core400 candidate `rank381..400` 已完整覆盖 `2025-04-01` 到 `2026-05-15`。
+- Core500 candidate `rank401..420` 已完整覆盖到 `2025-06-03`，`2025-06-04`
+  部分覆盖，后续单元等待 quota 重置后 resume。
 
 详细 metadata、audit、health 和 daily aggregate 路径见
 [2026-05-18 download progress](2026-05-18-hk-tick-download-progress.md)。
@@ -32,7 +33,7 @@
 | [2026-05-15 download progress](2026-05-15-hk-tick-download-progress.md) | Core200 rank166..200 补齐、Core300 rank201..230 partial 和 95% quota guard 摘要 |
 | [2026-05-16 download progress](2026-05-16-hk-tick-download-progress.md) | Core200 最新增量、Core300 rank201..260 补齐和 rank261..300 partial 摘要 |
 | [2026-05-17 download progress](2026-05-17-hk-tick-download-progress.md) | Core300 rank261..300 补齐、Core400 candidate rank301..340 partial 和 95% quota guard 摘要 |
-| [2026-05-18 download progress](2026-05-18-hk-tick-download-progress.md) | Core400 candidate rank301..380 补齐、rank381..400 partial 和 95% quota guard 摘要 |
+| [2026-05-18 download progress](2026-05-18-hk-tick-download-progress.md) | Core400 candidate rank301..400 补齐、Core500 candidate rank401..420 partial 和 99.5% quota guard 摘要 |
 
 旧逐日流水已压缩成上面的 dated records。需要逐 run 审计时，以对应 raw cache 下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。
