@@ -65,6 +65,10 @@ slices:
     file: slices/hk_tick_depth_core200_rank121_125.txt
     symbols: 5
     role: completed Core200 backfill slice
+  core500_rank461_500:
+    file: slices/hk_tick_depth_core500_rank461_500.txt
+    symbols: 40
+    role: Core500 candidate download slice from selection ranks 461..500
 
 probes:
   micro_tail25_20260506:
