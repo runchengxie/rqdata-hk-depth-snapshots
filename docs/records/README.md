@@ -42,6 +42,7 @@
 | [2026-05-18 download progress](2026-05-18-hk-tick-download-progress.md) | Core400 candidate rank301..400 补齐、Core500 candidate rank401..420 partial 和 99.5% quota guard 摘要 |
 | [2026-05-19 download progress](2026-05-19-hk-tick-download-progress.md) | Core500 candidate rank401..460 补齐、rank461..500 partial 和 95% quota guard 摘要 |
 | [2026-05-20 download progress](2026-05-20-hk-tick-download-progress.md) | Core500 最新日增量、Core600/Core640 candidate rank501..620 补齐和 rank621..660 partial 摘要 |
+| [2026-05-21 download progress](2026-05-21-hk-tick-download-progress.md) | Core500 最新日增量、rank621..660 补齐、rank661..780 完整覆盖和 Codex live 命令额度截停摘要 |
 
 旧逐日流水已压缩成上面的 dated records。需要逐 run 审计时，以对应 raw cache 下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。

@@ -93,6 +93,26 @@ slices:
     file: slices/hk_tick_depth_core700_rank661_700.txt
     symbols: 40
     role: Core700 candidate historical slice from selection ranks 661..700
+  core740_rank701_740:
+    file: slices/hk_tick_depth_core740_rank701_740.txt
+    symbols: 40
+    role: Core740 candidate historical slice from selection ranks 701..740
+  core780_rank741_780:
+    file: slices/hk_tick_depth_core780_rank741_780.txt
+    symbols: 40
+    role: Core780 candidate historical slice from selection ranks 741..780
+  core820_rank781_820:
+    file: slices/hk_tick_depth_core820_rank781_820.txt
+    symbols: 40
+    role: Core820 candidate historical slice from selection ranks 781..820
+  core860_rank821_860:
+    file: slices/hk_tick_depth_core860_rank821_860.txt
+    symbols: 40
+    role: Core860 candidate historical slice from selection ranks 821..860
+  core894_rank861_894:
+    file: slices/hk_tick_depth_core894_rank861_894.txt
+    symbols: 34
+    role: Core894 candidate historical slice from selection ranks 861..894
 
 probes:
   micro_tail25_20260506:
