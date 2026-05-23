@@ -96,7 +96,7 @@ provider 交易日历、`--resume`、`--continue-on-error`、`batch_size=1`、
 - rank781..894 的切片配置已新增，但 live 下载尚未开始；后续从
   `core820_rank781_820_20250401_20260520` 继续。
 - 本轮未到 RQData 95% quota guard；停止原因是 Codex 外部 live 命令审批额度，
-  不是 RQData provider quota。
+  RQData provider quota 仍有余量。
 
 ## 配置更新
 

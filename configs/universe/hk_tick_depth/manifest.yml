@@ -113,6 +113,10 @@ slices:
     file: slices/hk_tick_depth_core894_rank861_894.txt
     symbols: 34
     role: Core894 candidate historical slice from selection ranks 861..894
+  hkconnect_addon_20260521:
+    file: slices/hk_tick_depth_hkconnect_addon_20260521.txt
+    symbols: 3
+    role: Active stock-connect names present on 2026-05-21 but absent from the 2026-05-06 Core selection
 
 probes:
   micro_tail25_20260506:
@@ -123,6 +127,28 @@ probes:
     file: probes/hk_tick_depth_low_turnover_nonzero25_probe_20260506.txt
     symbols: 25
     basis: positive-turnover names immediately above the zero-heavy tail probe
+
+experimental:
+  non_connect_top100_20260521:
+    file: experimental/hk_tick_depth_non_connect_top100_20260521.txt
+    symbols: 100
+    basis: Active non-stock-connect CS ranked by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank101_200_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank101_200_20260521.txt
+    symbols: 100
+    basis: Active non-stock-connect CS ranks 101..200 by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank201_300_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank201_300_20260521.txt
+    symbols: 100
+    basis: Active non-stock-connect CS ranks 201..300 by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_top200_20260521:
+    file: experimental/hk_tick_depth_non_connect_top200_20260521.txt
+    symbols: 200
+    basis: Active non-stock-connect CS ranked by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_top300_20260521:
+    file: experimental/hk_tick_depth_non_connect_top300_20260521.txt
+    symbols: 300
+    basis: Active non-stock-connect CS ranked by 2026-04-20..2026-05-21 daily total_turnover
 
 archive:
   round1_20:

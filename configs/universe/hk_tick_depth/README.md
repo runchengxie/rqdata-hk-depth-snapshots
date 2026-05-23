@@ -6,6 +6,7 @@ This directory keeps the canonical symbol lists for HK tick-depth downloads.
 | --- | --- |
 | `current/` | Current Core universe lists and the selection CSV used to derive them |
 | `slices/` | Operational download slices |
+| `experimental/` | Live-selected expansion lists outside the Core stock-connect universe |
 | `probes/` | Small sizing or coverage probes |
 | `archive/` | Historical bootstrap and add-on lists kept for audit only |
 
