@@ -141,6 +141,14 @@ experimental:
     file: experimental/hk_tick_depth_non_connect_rank201_300_20260521.txt
     symbols: 100
     basis: Active non-stock-connect CS ranks 201..300 by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank1201_1300_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank1201_1300_20260521.txt
+    symbols: 100
+    basis: Active non-stock-connect CS ranks 1201..1300 by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank1301_1400_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank1301_1400_20260521.txt
+    symbols: 100
+    basis: Active non-stock-connect CS ranks 1301..1400 by 2026-04-20..2026-05-21 daily total_turnover
   non_connect_top200_20260521:
     file: experimental/hk_tick_depth_non_connect_top200_20260521.txt
     symbols: 200
