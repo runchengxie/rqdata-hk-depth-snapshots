@@ -149,6 +149,28 @@ experimental:
     file: experimental/hk_tick_depth_non_connect_rank1301_1400_20260521.txt
     symbols: 100
     basis: Active non-stock-connect CS ranks 1301..1400 by 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank1401_1753_positive_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank1401_1753_positive_20260521.txt
+    symbols: 353
+    basis: Active non-stock-connect CS ranks 1401..1753 with positive 2026-04-20..2026-05-21 daily total_turnover
+  non_connect_rank1754_1849_zero_turnover_20260521:
+    file: experimental/hk_tick_depth_non_connect_rank1754_1849_zero_turnover_20260521.txt
+    symbols: 96
+    basis: Active non-stock-connect CS ranks 1754..1849 with zero 2026-04-20..2026-05-21 daily total_turnover
+  historical_delisted_positive27_20250401:
+    file: experimental/hk_tick_depth_historical_delisted_positive27_20250401.txt
+    symbols: 27
+    basis: CS present on 2025-04-01 and absent from the 2026-05-21 active selection, with positive 2025-04-01..2026-05-22 daily total_turnover
+    selection_file: experimental/hk_tick_depth_historical_delisted_selection_20250401_20260521.csv
+  historical_delisted_zero36_20250401:
+    file: experimental/hk_tick_depth_historical_delisted_zero36_20250401.txt
+    symbols: 36
+    basis: CS present on 2025-04-01 and absent from the 2026-05-21 active selection, with zero 2025-04-01..2026-05-22 daily total_turnover
+    selection_file: experimental/hk_tick_depth_historical_delisted_selection_20250401_20260521.csv
+  cs_transient_ipo_20260522:
+    file: experimental/hk_tick_depth_cs_transient_ipo_20260522.txt
+    symbols: 1
+    basis: Active CS present on 2026-05-22 but absent from the 2026-05-21 active and 2025-04-01 historical selections
   non_connect_top200_20260521:
     file: experimental/hk_tick_depth_non_connect_top200_20260521.txt
     symbols: 200

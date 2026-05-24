@@ -6,17 +6,21 @@
 
 ## 当前摘要
 
-截至记录日期 `2026-05-23`：
+截至记录日期 `2026-05-24`：
 
 - 基于 `2026-05-21` live active 港股通选择快照的 897 只标的已覆盖到最新已确认
   可取交易日 `2026-05-22`。
-- 非港股通 top100 历史缺口已补完并追加 `2026-05-22` 增量；rank101..300 已完整
-  覆盖 `2025-04-01..2026-05-22`，形成可组合的 top300 扩展覆盖。
-- 本轮新增数据 health 与 daily aggregate 已完成，health 均为 `status=pass`。
-- 账户 tick quota 主动停在 48.72%，剩余 525.15 MB。
+- 非港股通 active ranks 1..1849 已完整覆盖 `2025-04-01..2026-05-22`；本轮补齐
+  rank1301..1400 并新增 tail rank1401..1849。
+- 全窗口 `CS` 并集复核为 `2,810` 只，本轮补入 historical delisted 63 只和
+  `2026-05-22` 临时新增 IPO 1 只；应有上市日期单元 `753,751` 个，本地缺失 `0`。
+- 新增非空 root 的 health / daily aggregate 已完成；historical zero36 的 provider
+  返回全空，health 以 `empty_dataset` 失败记录覆盖事实，不输出 daily asset。
+- 今日 quota 已确认刷新；最后成功查询值为 `164.28 MB / 1.00 GB`（`16.04%`）。
+  ETF tick 被 provider 权限拒绝，继续到 `99.5%` 只能重复现有 CS 覆盖。
 
 详细 metadata、audit、health 和 daily aggregate 路径见
-[2026-05-23 download progress](2026-05-23-hk-tick-download-progress.md)。
+[2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md)。
 
 ## 索引
 
@@ -36,6 +40,7 @@
 | [2026-05-21 download progress](2026-05-21-hk-tick-download-progress.md) | Core500 最新日增量、rank621..660 补齐、rank661..780 完整覆盖和 Codex live 命令额度截停摘要 |
 | [2026-05-22 download progress](2026-05-22-hk-tick-download-progress.md) | Core820..894 补齐、894 只港股通最新日增量、live 港股通 897 差异补齐和非港股通 top100 partial 95% quota guard 摘要 |
 | [2026-05-23 download progress](2026-05-23-hk-tick-download-progress.md) | 港股通 897 最新日增量、non-connect top100 补齐和 top300 扩展覆盖摘要 |
+| [2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md) | 全窗口 HK CS 新覆盖补齐、ETF entitlement 阻断与 quota 截停摘要 |
 
 旧逐日流水已压缩成上面的 dated records。需要逐 run 审计时，以对应 raw cache 下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。
