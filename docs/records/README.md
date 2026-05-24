@@ -18,6 +18,16 @@
   返回全空，health 以 `empty_dataset` 失败记录覆盖事实，不输出 daily asset。
 - 今日 quota 已确认刷新；最后成功查询值为 `164.28 MB / 1.00 GB`（`16.04%`）。
   ETF tick 被 provider 权限拒绝，继续到 `99.5%` 只能重复现有 CS 覆盖。
+- Core400 rank341..380 的 cold compact benchmark 已完成；季度大 row group zstd12
+  样本从 `972,948,263` bytes 降到 `600,244,191` bytes，减少 `38.3%`。
+- 全量 cold zstd12 cache 的 `792,672` 个候选 parquet 中有 `5,102` 个重复副本；
+  重复核验未发现内容不同的非空版本，可按保守规则派生 compact 输出。
+- 全量季度 compact 已生成：去重后 `39,760,427,880` bytes 降至
+  `15,898,022,941` bytes，减少 `60.02%`；`2026-05-25` 完成的 full health
+  验收为 `pass`（`445,397,450` 行，`0` failure）。
+- compact 输出已于 `2026-05-25` 封装为 `9` 个未外层压缩的 tar 包，总计
+  `15,926,087,680` bytes，最大单包 `1,851,801,600` bytes；独立 SHA-256
+  复核 `9 / 9` 通过。
 
 详细 metadata、audit、health 和 daily aggregate 路径见
 [2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md)。
@@ -41,6 +51,7 @@
 | [2026-05-22 download progress](2026-05-22-hk-tick-download-progress.md) | Core820..894 补齐、894 只港股通最新日增量、live 港股通 897 差异补齐和非港股通 top100 partial 95% quota guard 摘要 |
 | [2026-05-23 download progress](2026-05-23-hk-tick-download-progress.md) | 港股通 897 最新日增量、non-connect top100 补齐和 top300 扩展覆盖摘要 |
 | [2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md) | 全窗口 HK CS 新覆盖补齐、ETF entitlement 阻断与 quota 截停摘要 |
+| [2026-05-24 compact benchmark](2026-05-24-hk-tick-compact-benchmark.md) | Core400 zstd12 冷归档合并压缩和 health 对照结果 |
 
 旧逐日流水已压缩成上面的 dated records。需要逐 run 审计时，以对应 raw cache 下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。

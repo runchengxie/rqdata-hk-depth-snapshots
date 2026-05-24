@@ -85,6 +85,40 @@ metadata 记录源目录、输出目录、目标 parquet 配置、输入/输出�
 失败分片和 audit 路径。audit 按 parquet part 记录 `rewritten`、`copied`、
 `skipped_existing` 或 `failed`，并记录源/目标 codec、行数和字节数。
 
+## Cold Compact Output
+
+`compact-raw` 从 `symbol-date` raw cache 写出冷归档派生物。该输出用于压缩实验和
+冷备份，下载 resume 与常规 raw 操作继续基于默认 raw cache。布局按参数选择：
+
+```text
+parts/order_book_id=00001.XHKG/year=2025/quarter=Q2.parquet
+parts/order_book_id=00001.XHKG/year=2025.parquet
+```
+
+第一种对应 `grouping=symbol-quarter`，第二种对应 `grouping=symbol-year`。每次执行写出：
+
+```text
+meta/compact_raw_<timestamp>.json
+audit/compact_raw_<timestamp>.csv
+```
+
+metadata 记录 `layout_version`、`grouping`、`row_group_days`、parquet 配置、输入和
+输出字节数、节省字节数、压缩比、输出 compact part 数以及失败摘要。audit 以输出
+compact part 为单位记录标的、时间段、源 part 数、行数、字节数、输出 row group 数
+、schema variant 数和处理状态。输入组存在全空 `null` schema 分片时，输出在该
+compact part 范围内使用 permissive schema unification，metadata 的
+`schema_variant_compact_parts` 记录受影响输出数量。
+
+默认 `duplicate_policy=error`，输入出现重复 `trade_date + order_book_id` 时拒绝
+生成输出。显式使用 `duplicate_policy=prefer-nonempty-identical` 时，仅允许以下
+可审计选择：字节一致副本折叠；所有副本为空时优先保留 typed schema；空 retry 与
+一个或多个字节一致的非空副本并存时保留非空副本。存在不同内容的非空副本时仍失败。
+metadata 的 `duplicate_resolution` 记录候选/选定/丢弃 part 数、按规则分类计数、
+字节数和选择样例。
+
+`row_group_days=1` 保持一个源交易日对应一个输出 row group；更大的值以有限缓存将
+相邻交易日合并到一个 row group，以便测试跨日压缩收益。
+
 ## Daily Aggregate
 
 `aggregate-daily` 输出一份日频 parquet。常见字段类别：

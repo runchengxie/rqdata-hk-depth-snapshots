@@ -12,6 +12,7 @@ rqdata-tick <command> [options]
 rqdata-tick download --help
 rqdata-tick health --help
 rqdata-tick reconcile-daily --help
+rqdata-tick compact-raw --help
 rqdata-tick package-assets --help
 ```
 
@@ -23,6 +24,8 @@ rqdata-tick package-assets --help
 | `download` | 批量下载 raw tick parquet |
 | `health` | 检查 raw tick 自身质量 |
 | `aggregate-daily` | 从 raw tick 聚合日频特征 |
+| `recompress-raw` | 重编码 raw parquet 压缩格式 |
+| `compact-raw` | 生成冷归档 compact parquet 派生物 |
 | `emit-asset` | 输出 asset 目录 |
 | `package-assets` | 生成本地备份 tarball |
 | `release-assets` | 上传备份 tarball 到 GitHub Release |
@@ -170,6 +173,60 @@ rqdata-tick recompress-raw \
   --compression-level 3 \
   --progress
 ```
+
+## `compact-raw`
+
+将 `symbol-date` raw cache 合并成冷归档 parquet 派生物。输入 cache 保持原样；
+compact 输出按标的和时间段组织，metadata 记录输入/输出字节数和压缩比例。
+`--row-group-days 1` 主要衡量小文件元数据开销；使用较大的值可评估跨日 row group
+的压缩收益，峰值内存随该值增加。输出 compact part 内的空分片 `null` schema 会
+与 typed schema 统一，并在 metadata 中计数。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--input` | 必填 | `symbol-date` raw cache 目录 |
+| `--output` | 必填 | compact 输出目录 |
+| `--grouping` | `symbol-quarter` | 输出分组：`symbol-quarter` 或 `symbol-year` |
+| `--compression` | `zstd` | compact parquet 压缩算法 |
+| `--compression-level` | `3` | compact parquet 压缩等级 |
+| `--row-group-days` | `1` | 一个输出 row group 最多合并的源交易日 part 数 |
+| `--duplicate-policy` | `error` | 重复日期-标的处理；`prefer-nonempty-identical` 仅折叠相同非空副本，并让非空 refetch 替换空 retry |
+| `--resume` | `true` | 输出行数、schema、codec 和 row group 数匹配时跳过已有 compact part |
+| `--no-resume` | `false` | 强制重写全部 compact part |
+| `--continue-on-error` | `false` | 一个 compact part 失败后继续处理 |
+| `--meta-output` | 空 | compact metadata JSON 输出路径 |
+| `--out-units` | 空 | compact part 级 audit CSV 输出路径 |
+| `--progress` | `false` | 在 stderr 显示输入 part/字节进度 |
+
+示例：
+
+```bash
+rqdata-tick compact-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12/core400_rank341_380_20250401_20260515 \
+  --output artifacts/cache/rqdata/hk_tick_depth_compact_bench/core400_q_zstd12_rg60 \
+  --grouping symbol-quarter \
+  --compression zstd \
+  --compression-level 12 \
+  --row-group-days 60 \
+  --progress
+```
+
+当输入是包含 retry/refetch 副本的完整 cold cache 时，可使用保守重复处理：
+
+```bash
+rqdata-tick compact-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
+  --output artifacts/cache/rqdata/hk_tick_depth_compact_zstd12_q_rg60 \
+  --grouping symbol-quarter \
+  --compression zstd \
+  --compression-level 12 \
+  --row-group-days 60 \
+  --duplicate-policy prefer-nonempty-identical \
+  --progress
+```
+
+该策略只接受字节相同副本、全部为空的副本，或空 retry 与内容一致的非空副本组合；
+发现两个内容不同的非空副本时命令失败，不静默选择来源。
 
 ## `emit-asset`
 

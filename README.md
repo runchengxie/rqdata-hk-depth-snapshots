@@ -90,6 +90,12 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 已有 raw cache 可用 `rqdata-tick recompress-raw --input OLD --output NEW` 无损迁移到新的
 parquet codec。迁移命令写新目录和 audit，不修改输入目录。
 
+评估冷归档压缩率时，可用 `compact-raw --grouping symbol-quarter --row-group-days 60`
+从 `symbol-date` cache 派生按标的合并的 compact parquet，并通过 metadata 比较输入
+和输出字节数。命令默认拒绝重复日期-标的输入；对于包含 retry/refetch 重叠副本的
+归档 cache，可显式用 `--duplicate-policy prefer-nonempty-identical`，仅在非空副本
+内容一致时保留非空版本，否则失败。默认 raw cache 继续服务 resume、health 和聚合流程。
+
 冷存储备份可先用 `recompress-raw --compression zstd --compression-level 12` 生成高压缩
 raw 副本，再用 `package-assets --archive-format tar --raw-dedupe symbol-date --progress`
 打包该副本，减少重复 raw part，并避免对已压缩 parquet 再执行耗时的外层压缩。

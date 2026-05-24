@@ -77,6 +77,40 @@ rqdata-tick recompress-raw \
 
 迁移后先对新目录跑 `health` 和 `aggregate-daily`，确认通过后再归档或替换旧目录。
 
+冷归档压缩实验可从 zstd12 cache 派生 compact 输出。下面的无重叠样本季度方案
+每次最多在内存中合并同一标的 60 个交易日 part：
+
+```bash
+rqdata-tick compact-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12/core400_rank341_380_20250401_20260515 \
+  --output artifacts/cache/rqdata/hk_tick_depth_compact_bench/core400_q_zstd12_rg60 \
+  --grouping symbol-quarter \
+  --compression zstd \
+  --compression-level 12 \
+  --row-group-days 60 \
+  --progress
+```
+
+用 `--grouping symbol-year --row-group-days 1` 可形成仅合并文件的对照输出。
+compact metadata 中的 `source_bytes`、`output_bytes` 和 `compression_ratio`
+用于判断后续是否值得全量派生冷归档。
+
+完整 cold cache 若包含 retry/refetch 重复单元，不需要先复制一份新目录。可显式
+启用保守去重策略：仅保留相同非空副本或用非空 refetch 替代空 retry，遇到不同的
+非空副本立即失败：
+
+```bash
+rqdata-tick compact-raw \
+  --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
+  --output artifacts/cache/rqdata/hk_tick_depth_compact_zstd12_q_rg60 \
+  --grouping symbol-quarter \
+  --compression zstd \
+  --compression-level 12 \
+  --row-group-days 60 \
+  --duplicate-policy prefer-nonempty-identical \
+  --progress
+```
+
 完整字段见 [数据契约](data-contracts.md)。
 
 ## 4. Health
@@ -180,7 +214,8 @@ rqdata-tick package-assets \
   --config-source path/to/universe_config
 ```
 
-冷存储可以把 raw cache 先无损重编码到更高等级 parquet zstd，再用 `.tar` 分包：
+冷存储可以把 raw cache 先无损重编码到更高等级 parquet zstd，再按需要生成
+compact 派生物或用 `.tar` 分包：
 
 ```bash
 rqdata-tick recompress-raw \

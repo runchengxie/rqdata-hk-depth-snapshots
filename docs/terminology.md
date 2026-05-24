@@ -10,6 +10,9 @@
 | raw layout | raw cache 的目录布局 |
 | symbol-date | 默认 raw layout，一个标的、一个交易日、一个 parquet |
 | legacy batch | 历史批处理 raw layout，保留读取兼容 |
+| compact raw | 按标的和时间段合并的冷归档 parquet 派生物 |
+| row-group-days | compact 输出中一个 parquet row group 合并的源交易日 part 上限 |
+| duplicate policy | compact 输入出现重复日期-标的时使用的显式、可审计选择规则 |
 | metadata | 每次运行生成的元数据 JSON |
 | audit | 下载单元级审计 CSV |
 | provider | 数据源适配器，当前包括 RQDataClient 和 FakeProvider |

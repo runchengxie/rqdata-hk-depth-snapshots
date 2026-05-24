@@ -9,6 +9,11 @@ from pathlib import Path
 
 from rqdata_tick_data.aggregate import write_daily_aggregate
 from rqdata_tick_data.assets import emit_daily_asset, emit_raw_asset
+from rqdata_tick_data.compact import (
+    COMPACT_GROUPINGS,
+    DUPLICATE_POLICIES,
+    compact_raw_cache,
+)
 from rqdata_tick_data.downloader import (
     download_tick_depth,
     probe_tick_depth,
@@ -129,6 +134,32 @@ def build_parser() -> argparse.ArgumentParser:
     recompress.add_argument("--meta-output")
     recompress.add_argument("--out-units")
     recompress.add_argument("--progress", action="store_true")
+
+    compact = subparsers.add_parser(
+        "compact-raw",
+        help="Merge symbol-date raw parquet parts into cold-storage compact parquet files.",
+    )
+    compact.add_argument("--input", required=True)
+    compact.add_argument("--output", required=True)
+    compact.add_argument("--grouping", choices=COMPACT_GROUPINGS, default="symbol-quarter")
+    compact.add_argument(
+        "--compression",
+        dest="parquet_compression",
+        default=DEFAULT_PARQUET_COMPRESSION,
+    )
+    compact.add_argument("--compression-level", dest="parquet_compression_level", type=int)
+    compact.add_argument("--row-group-days", type=int, default=1)
+    compact.add_argument(
+        "--duplicate-policy",
+        choices=DUPLICATE_POLICIES,
+        default="error",
+    )
+    compact.add_argument("--resume", dest="resume", action="store_true", default=True)
+    compact.add_argument("--no-resume", dest="resume", action="store_false")
+    compact.add_argument("--continue-on-error", action="store_true")
+    compact.add_argument("--meta-output")
+    compact.add_argument("--out-units")
+    compact.add_argument("--progress", action="store_true")
 
     asset = subparsers.add_parser("emit-asset", help="Emit an asset-compatible directory.")
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
@@ -321,6 +352,26 @@ def _handle_emit_asset(args: argparse.Namespace, provider: TickDataProvider | No
     return 0
 
 
+def _handle_compact_raw(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
+    del provider
+    metadata = compact_raw_cache(
+        args.input,
+        args.output,
+        grouping=args.grouping,
+        parquet_compression=args.parquet_compression,
+        parquet_compression_level=args.parquet_compression_level,
+        row_group_days=args.row_group_days,
+        duplicate_policy=args.duplicate_policy,
+        resume=args.resume,
+        continue_on_error=args.continue_on_error,
+        meta_output=args.meta_output,
+        units_output=args.out_units,
+        progress=args.progress,
+    )
+    _print_json(metadata)
+    return 0 if metadata["status"] == "pass" else 1
+
+
 def _handle_package_assets(args: argparse.Namespace, provider: TickDataProvider | None) -> int:
     del provider
     metadata = package_tick_assets(
@@ -416,6 +467,7 @@ COMMAND_HANDLERS = {
     "health": _handle_health,
     "aggregate-daily": _handle_aggregate_daily,
     "recompress-raw": _handle_recompress_raw,
+    "compact-raw": _handle_compact_raw,
     "emit-asset": _handle_emit_asset,
     "package-assets": _handle_package_assets,
     "release-assets": _handle_release_assets,
