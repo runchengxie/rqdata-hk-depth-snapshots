@@ -54,9 +54,9 @@ def test_package_tick_assets_writes_manifest_readme_and_tarballs(tmp_path: Path)
         "configs",
     }
 
-    raw_tar = tar_dir / "demo-20250102-raw-part001.tar.gz"
+    raw_tar = tar_dir / "demo-20250102-raw-part001.tar"
     assert raw_tar.exists()
-    with tarfile.open(raw_tar, "r:gz") as tar:
+    with tarfile.open(raw_tar, "r:") as tar:
         names = set(tar.getnames())
     assert "raw/asset_raw/manifest.yml" in names
     assert "raw/asset_raw/data/part.parquet" in names
@@ -126,8 +126,8 @@ def test_package_tick_assets_can_dedupe_symbol_date_raw_parts(tmp_path: Path) ->
     )
 
     assert payload["dedupe"]["raw"]["dropped_entries"] == 1
-    raw_tar = tar_dir / "dedupe-20250105-raw-part001.tar.gz"
-    with tarfile.open(raw_tar, "r:gz") as tar:
+    raw_tar = tar_dir / "dedupe-20250105-raw-part001.tar"
+    with tarfile.open(raw_tar, "r:") as tar:
         names = set(tar.getnames())
     duplicate_names = [name for name in names if name.endswith(duplicate.as_posix())]
     assert duplicate_names == [
@@ -164,7 +164,7 @@ def test_package_assets_cli_and_release_assets_dry_run(tmp_path: Path) -> None:
         )
         == 0
     )
-    assert (tar_dir / "cli-demo-20250103-raw-part001.tar.gz").exists()
+    assert (tar_dir / "cli-demo-20250103-raw-part001.tar").exists()
 
     assert (
         main(
@@ -181,7 +181,7 @@ def test_package_assets_cli_and_release_assets_dry_run(tmp_path: Path) -> None:
     )
 
 
-def test_package_assets_cli_tar_zst_and_release_assets_dry_run(tmp_path: Path) -> None:
+def test_package_assets_cli_tar_zst_and_release_assets_dry_run(tmp_path: Path, capsys) -> None:
     if shutil.which("zstd") is None:
         pytest.skip("zstd binary is not available")
 
@@ -217,6 +217,9 @@ def test_package_assets_cli_tar_zst_and_release_assets_dry_run(tmp_path: Path) -
         == 0
     )
     assert (tar_dir / "cli-cold-20250106-raw-part001.tar.zst").exists()
+    warning = capsys.readouterr().err
+    assert "applies only to the outer archive" in warning
+    assert "Use recompress-raw to change parquet compression" in warning
 
     assert (
         main(

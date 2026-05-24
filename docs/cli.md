@@ -193,7 +193,9 @@ rqdata-tick emit-asset \
 ## `package-assets`
 
 将本地 tick-depth 数据、聚合结果、报告、配置和记录打成可搬运的 archive 分包。
-默认输出 `.tar.gz`；冷存储可选择 `.tar.zst` 并启用 raw symbol-date 去重。
+默认输出 `.tar`，避免对已压缩 parquet 再执行耗时的外层压缩。`tar.gz` 和
+`tar.zst` 为显式 archive 容器压缩选项；调整 raw parquet 压缩率使用
+`recompress-raw`。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -210,8 +212,8 @@ rqdata-tick emit-asset \
 | `--report-source` | 空 | 额外 report 路径；可重复 |
 | `--config-source` | 空 | 额外 config 或 universe 路径；可重复 |
 | `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分；GitHub Release 单 asset 需小于 2GiB，网络不稳时可用 `1000000000` |
-| `--archive-format` | `tar.gz` | 输出格式：`tar.gz`、`tar.zst` 或 `tar` |
-| `--archive-compression-level` | 空 | archive 压缩等级；`tar.gz` 支持 `1-9`，`tar.zst` 支持 `1-22` |
+| `--archive-format` | `tar` | 输出格式：`tar.gz`、`tar.zst` 或 `tar`；压缩格式仅作用于 archive 容器 |
+| `--archive-compression-level` | 空 | 外层 archive 压缩等级；`tar.gz` 支持 `1-9`，`tar.zst` 支持 `1-22` |
 | `--raw-dedupe` | `none` | raw part 去重模式；`symbol-date` 对 `trade_date + order_book_id` 只保留一个 parquet part |
 | `--progress` | `false` | 在 stderr 显示 archive 写入进度条 |
 
@@ -223,10 +225,12 @@ rqdata-tick package-assets \
   --name hk_tick_depth_current \
   --as-of 20260509 \
   --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --archive-format tar \
   --overwrite
 ```
 
-冷存储可先用 `recompress-raw` 生成高等级 zstd parquet 副本，再显式选择冷副本打 `.tar.zst`：
+冷存储可先用 `recompress-raw` 生成高等级 zstd parquet 副本，再显式选择冷副本打
+未压缩 archive 分包：
 
 ```bash
 rqdata-tick package-assets \
@@ -238,12 +242,15 @@ rqdata-tick package-assets \
   --metadata-source docs/records \
   --report-source artifacts/reports \
   --config-source path/to/universe_config \
-  --archive-format tar.zst \
-  --archive-compression-level 12 \
+  --archive-format tar \
   --raw-dedupe symbol-date \
   --progress \
   --overwrite
 ```
+
+交付流程要求压缩 archive 容器时，可显式选择 `--archive-format tar.zst` 和
+`--archive-compression-level`。包含 raw parquet 时，命令会提示该等级仅压缩
+外层 archive；raw parquet 压缩率由其生成或 `recompress-raw` 阶段决定。
 
 显式选择已 emit 的 raw/daily asset：
 

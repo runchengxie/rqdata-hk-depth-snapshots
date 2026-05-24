@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ GITHUB_RELEASE_ASSET_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_TAR_BYTES = 1_900_000_000
 PART_NAMES = ("raw", "daily", "metadata", "reports", "configs")
 ARCHIVE_FORMATS = ("tar.gz", "tar.zst", "tar")
-DEFAULT_ARCHIVE_FORMAT = "tar.gz"
+DEFAULT_ARCHIVE_FORMAT = "tar"
 RAW_DEDUPE_MODES = ("none", "symbol-date")
 
 
@@ -208,6 +209,28 @@ def _validate_archive_options(
         raise ValueError("--archive-compression-level for tar.gz must be between 1 and 9.")
     if archive_format == "tar.zst" and archive_compression_level > 22:
         raise ValueError("--archive-compression-level for tar.zst must be between 1 and 22.")
+
+
+def _warn_on_compressed_raw_archive(
+    entries: list[PackageEntry],
+    *,
+    archive_format: str,
+    archive_compression_level: int | None,
+) -> None:
+    if archive_format == "tar" or not any(entry.source.suffix == ".parquet" for entry in entries):
+        return
+    level = (
+        f" at level {archive_compression_level}"
+        if archive_compression_level is not None
+        else ""
+    )
+    print(
+        f"warning: {archive_format} compression{level} applies only to the outer archive; "
+        "selected raw parquet files retain their existing compression and may gain little "
+        "size reduction. Use recompress-raw to change parquet compression, or use "
+        "--archive-format tar to avoid outer recompression.",
+        file=sys.stderr,
+    )
 
 
 def _add_entries_to_tar(
@@ -600,6 +623,11 @@ def package_tick_assets(
         sources_summary[part] = [str(path) for path in source_map.get(part, [])]
         if part == "raw":
             entries, dedupe_summary[part] = _dedupe_raw_entries(entries, mode=raw_dedupe)
+            _warn_on_compressed_raw_archive(
+                entries,
+                archive_format=archive_format,
+                archive_compression_level=archive_compression_level,
+            )
         tarballs.extend(
             _package_chunks(
                 output_dir=output_dir,

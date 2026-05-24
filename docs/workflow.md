@@ -155,7 +155,8 @@ asset 目录契约见 [数据契约](data-contracts.md)。
 ## 8. Package Assets
 
 `package-assets` 把本地 raw cache、日频聚合、报告、配置和记录打成本地 archive
-分包。默认推荐先保留本地 tarball；上传 GitHub Release 时再显式运行 `release-assets`。
+分包。默认使用 `.tar` 避免对已压缩 parquet 再执行耗时的外层压缩；上传 GitHub
+Release 时再显式运行 `release-assets`。
 
 ```bash
 rqdata-tick package-assets \
@@ -163,6 +164,7 @@ rqdata-tick package-assets \
   --name hk_tick_depth_current \
   --as-of 20260509 \
   --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
+  --archive-format tar \
   --overwrite
 ```
 
@@ -178,7 +180,7 @@ rqdata-tick package-assets \
   --config-source path/to/universe_config
 ```
 
-冷存储可以把 raw cache 先无损重编码到更高等级 parquet zstd，再用 `.tar.zst` 打包：
+冷存储可以把 raw cache 先无损重编码到更高等级 parquet zstd，再用 `.tar` 分包：
 
 ```bash
 rqdata-tick recompress-raw \
@@ -200,12 +202,14 @@ rqdata-tick package-assets \
   --report-source artifacts/reports \
   --config-source path/to/universe_config \
   --max-tar-bytes 1900000000 \
-  --archive-format tar.zst \
-  --archive-compression-level 12 \
+  --archive-format tar \
   --raw-dedupe symbol-date \
   --progress \
   --overwrite
 ```
+
+若交付端要求压缩 archive 容器，可显式选择 `.tar.zst`；其压缩等级作用于外层
+archive，包含 raw parquet 的运行会输出相应提示。
 
 生成的 `manifest.yml` 记录每个 tarball 的 `sha256`、字节数、part 和样例 entry。
 公开或跨账号分发 provider 数据前，先确认账号和数据供应商条款。

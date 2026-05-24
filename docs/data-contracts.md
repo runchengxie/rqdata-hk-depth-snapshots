@@ -142,8 +142,10 @@ README.md
 - 每个 tarball 的 part、chunk 序号、输入字节数、压缩后字节数、文件数和 `sha256`。
 - 每个 tarball 的前几个 archive entry，便于快速确认路径布局。
 
-`<ext>` 默认为 `tar.gz`，也可为 `tar.zst` 或 `tar`。启用 `raw_dedupe=symbol-date`
-时，raw parquet part 会按 `trade_date + order_book_id` 分组，manifest 的 `dedupe.raw`
+`<ext>` 默认为 `tar`，也可显式选择 `tar.zst` 或 `tar.gz`。后两种格式的压缩等级
+只作用于外层 archive；raw parquet codec 和压缩等级由下载或 `recompress-raw` 阶段
+决定。启用 `raw_dedupe=symbol-date` 时，raw parquet part 会按
+`trade_date + order_book_id` 分组，manifest 的 `dedupe.raw`
 记录候选、保留和丢弃数量以及样例。重复候选按文件修改时间、文件大小和 archive path
 排序后选择保留项。
 
