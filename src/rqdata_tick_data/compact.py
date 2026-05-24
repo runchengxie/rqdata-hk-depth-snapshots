@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import os
 import time
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from rqdata_tick_data.progress import ProgressBar
+from rqdata_tick_data.raw_duplicates import resolve_safe_duplicate_parts
 from rqdata_tick_data.storage import (
     DEFAULT_PARQUET_COMPRESSION,
     DEFAULT_PARQUET_COMPRESSION_LEVEL,
@@ -66,45 +66,6 @@ def _compact_target(
     return f"{year}-Q{quarter}", base / f"year={year}" / f"quarter=Q{quarter}.parquet"
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _non_null_schema_fields(path: Path) -> int:
-    return sum(
-        1 for field in pq.ParquetFile(path).schema_arrow if not pa.types.is_null(field.type)
-    )
-
-
-def _resolve_duplicate_parts(
-    unit: tuple[str, str],
-    parts: list[Path],
-) -> tuple[Path, str]:
-    ordered = sorted(parts)
-    rows = {
-        part: int(pq.ParquetFile(part).metadata.num_rows)
-        for part in ordered
-    }
-    digests = {part: _sha256(part) for part in ordered}
-    if len(set(digests.values())) == 1:
-        return ordered[0], "byte_identical"
-    nonempty = [part for part in ordered if rows[part] > 0]
-    if not nonempty:
-        selected = min(ordered, key=lambda path: (-_non_null_schema_fields(path), str(path)))
-        return selected, "all_empty_schema_or_metadata_diff"
-    if len({digests[part] for part in nonempty}) != 1:
-        trade_date, order_book_id = unit
-        raise ValueError(
-            "compact-raw found conflicting non-empty duplicate symbol-date parts for "
-            f"{trade_date}/{order_book_id}: {', '.join(str(part) for part in ordered)}"
-        )
-    return nonempty[0], "nonempty_replaces_empty"
-
-
 def _build_groups(
     source: Path,
     output: Path,
@@ -142,7 +103,11 @@ def _build_groups(
     }
     selection_samples: list[dict[str, Any]] = []
     for unit, candidates in sorted(duplicate_parts.items()):
-        selected, resolution = _resolve_duplicate_parts(unit, candidates)
+        selected, resolution = resolve_safe_duplicate_parts(
+            unit,
+            candidates,
+            operation="compact-raw",
+        )
         seen_units[unit] = selected
         resolutions[resolution] += 1
         if len(selection_samples) < 10:
@@ -389,7 +354,7 @@ def compact_raw_cache(
     units_output: str | Path | None = None,
     progress: bool = False,
 ) -> dict[str, Any]:
-    """Compact symbol-date raw cache parts into cold-storage parquet parts."""
+    """Compact symbol-date raw snapshot parts into cold-storage parquet parts."""
     source = Path(input_root)
     output = Path(output_root)
     if source.resolve() == output.resolve():

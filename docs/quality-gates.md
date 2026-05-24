@@ -2,9 +2,9 @@
 
 质量门禁由三层组成：
 
-1. `health` 检查 raw tick 自身质量。
+1. `health` 检查原始快照自身质量。
 2. `aggregate-daily` 输出研究特征和质量标记。
-3. `reconcile-daily` 将 tick 聚合 OHLCV 与外部日频 reference asset 对账。
+3. `reconcile-daily` 将原始快照聚合 OHLCV 与外部日频基准数据对账。
 
 ## Severity 和退出码
 
@@ -19,7 +19,7 @@
 
 默认值是 `error`。下载验收通常使用 `warning`，探索性检查可使用 `none`。
 
-## Raw Tick Health
+## 原始快照 Health
 
 `health` 会按 parquet 分片增量扫描，输出数据集级 summary 和 symbol-date 级 `unit_diagnostics`。
 
@@ -39,7 +39,7 @@
 示例：
 
 ```bash
-rqdata-tick health \
+rqdata-hk-depth health \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --out-json artifacts/reports/tick_health_demo.json \
   --out-units artifacts/reports/tick_health_demo_units.csv \
@@ -61,18 +61,18 @@ rqdata-tick health \
 
 ## Daily Reconciliation
 
-`reconcile-daily` 将 raw tick 聚合出的 OHLCV 与外部日频 reference asset 对账。
+`reconcile-daily` 将原始快照聚合出的 OHLCV 与外部日频基准数据对账。
 
 检查范围：
 
-- raw tick 是否为空。
+- 原始快照是否为空。
 - timestamp 解析失败和 session 外记录。
 - quote ladder 异常。
-- tick-derived OHLC 边界异常。
+- 快照聚合 OHLC 边界异常。
 - daily reference OHLC 边界异常。
-- 日频有成交但缺 tick。
-- tick close、volume、turnover 与日频 reference 超出容忍度。
-- tick 标的无法匹配 daily reference。
+- 日频有成交但缺原始快照。
+- 快照聚合 close、volume、turnover 与日频基准数据超出容忍度。
+- 快照标的无法匹配日频基准数据。
 
 聚合 metadata 会记录 close、volume、turnover 的来源，例如 `last_valid_tick`、`final`、`max_fallback` 和 `missing`。
 
@@ -80,10 +80,10 @@ rqdata-tick health \
 
 | Policy | 用途 | 数值差异处理 |
 | --- | --- | --- |
-| `raw-daily` | 下载质量门禁，要求日频 reference 与 raw tick 使用同一报价口径 | 价格、成交量、成交额超容忍度按门禁 severity 处理 |
+| `raw-daily` | 下载质量门禁，要求日频基准数据与原始快照使用同一报价口径 | 价格、成交量、成交额超容忍度按门禁 severity 处理 |
 | `cross-clean` | 与研究清洗底座做覆盖检查 | 价格、成交量、成交额口径差异记录为 `info` |
 
-`raw-daily` 是下载验收首选 reference。`cross-clean` 用于确认研究底座覆盖和标的映射，覆盖缺口仍按 warning 进入门禁。
+`raw-daily` 是下载验收首选基准数据。`cross-clean` 用于确认研究底座覆盖和标的映射，覆盖缺口仍按 warning 进入门禁。
 
 ## 容忍度和 Session
 
@@ -100,4 +100,4 @@ rqdata-tick health \
 
 ## 低内存扫描
 
-`health`、`aggregate-daily` 和 `reconcile-daily` 对 raw tick 输入使用分片级增量读取。内存中主要保留单个 parquet 分片、symbol-date 诊断、日频聚合行和最终对账表。
+`health`、`aggregate-daily` 和 `reconcile-daily` 对原始快照输入使用分片级增量读取。内存中主要保留单个 parquet 分片、symbol-date 诊断、日频聚合行和最终对账表。

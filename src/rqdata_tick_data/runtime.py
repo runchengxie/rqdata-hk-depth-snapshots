@@ -72,7 +72,7 @@ def retry_provider_call(
     for attempt in range(1, max_attempts + 1):
         try:
             return RetryResult(value=action(), attempts=attempt)
-        except Exception as exc:  # noqa: PERF203 - attempt-specific retry path.
+        except Exception as exc:
             last_exc = exc
             if looks_like_quota_error(exc):
                 raise ProviderRequestError("quota", label, str(exc)) from exc

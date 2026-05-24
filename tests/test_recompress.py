@@ -14,7 +14,7 @@ from rqdata_tick_data.storage import load_parquet_parts
 from rqdata_tick_data.testing import FakeProvider
 
 
-def _write_snappy_raw(root) -> list[str]:  # noqa: ANN001
+def _write_snappy_raw(root) -> list[str]:
     fields = parse_fields("last volume total_turnover a1 a1_v b1 b1_v")
     download_tick_depth(
         provider=FakeProvider(),

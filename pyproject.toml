@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "rqdata-tick-data"
+name = "rqdata-hk-depth-snapshots"
 version = "0.1.0"
-description = "Probe, download, validate, and aggregate RQData Hong Kong historical tick-depth snapshots."
+description = "Probe, download, validate, reconcile, aggregate, and package RQData Hong Kong 10-level depth snapshots."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -23,6 +23,7 @@ rqdata = [
 ]
 
 [project.scripts]
+rqdata-hk-depth = "rqdata_tick_data.cli:main_entry"
 rqdata-tick = "rqdata_tick_data.cli:main_entry"
 
 [dependency-groups]
@@ -47,4 +48,4 @@ target-version = "py311"
 extend-exclude = ["project_tools"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "RUF100"]

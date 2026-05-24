@@ -1304,7 +1304,7 @@ def download_tick_depth(
     quota_safety_multiplier: float = 1.2,
     audit_output: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Download tick-depth snapshots into parquet parts and write run metadata."""
+    """Download ten-level depth snapshots into parquet parts and write run metadata."""
     config = _build_download_config(
         symbols=symbols,
         start_date=start_date,

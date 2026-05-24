@@ -919,7 +919,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rqdata-tick-data"
+name = "rqdata-hk-depth-snapshots"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

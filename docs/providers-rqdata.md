@@ -4,13 +4,13 @@
 
 ## FakeProvider
 
-`FakeProvider` 位于 `src/rqdata_tick_data/testing.py`。它生成确定性的离线 tick 数据，用于测试、CLI smoke 和文档示例。
+`FakeProvider` 位于 `src/rqdata_tick_data/testing.py`。它生成确定性的离线十档盘口快照，用于测试、CLI smoke 和文档示例。
 
 离线命令：
 
 ```bash
-rqdata-tick download ... --fake-provider
-rqdata-tick quota --fake-provider --pretty
+rqdata-hk-depth download ... --fake-provider
+rqdata-hk-depth quota --fake-provider --pretty
 ```
 
 `FakeProvider` 不需要 RQData 账号。
@@ -25,7 +25,7 @@ uv sync --extra rqdata --group dev
 
 项目直接使用的 RQData 能力：
 
-- 港股历史 tick-depth 快照读取。
+- 港股历史十档盘口快照读取。
 - 港股交易日历。
 - quota 查询。
 - 港股合约和字段语义核对。
@@ -54,7 +54,7 @@ uv sync --extra rqdata --group dev
 线上下载前先查看 quota：
 
 ```bash
-rqdata-tick quota --pretty
+rqdata-hk-depth quota --pretty
 ```
 
 `download` 默认开启 quota guard：

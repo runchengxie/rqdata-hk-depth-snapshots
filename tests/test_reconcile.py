@@ -12,11 +12,11 @@ from rqdata_tick_data.reconcile import (
 from rqdata_tick_data.storage import atomic_write_parquet
 
 
-def _write_raw(root, frame: pd.DataFrame) -> None:  # noqa: ANN001
+def _write_raw(root, frame: pd.DataFrame) -> None:
     atomic_write_parquet(frame, root / "parts" / "trade_date=20250303" / "batch_0000.parquet")
 
 
-def _write_daily(asset_root, symbol: str, frame: pd.DataFrame) -> None:  # noqa: ANN001
+def _write_daily(asset_root, symbol: str, frame: pd.DataFrame) -> None:
     atomic_write_parquet(frame, asset_root / "data" / f"{symbol}.parquet")
 
 

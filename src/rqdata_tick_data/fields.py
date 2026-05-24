@@ -1,4 +1,4 @@
-"""Field definitions for RQData Hong Kong tick-depth snapshots."""
+"""Field definitions for RQData Hong Kong ten-level depth snapshots."""
 
 from __future__ import annotations
 

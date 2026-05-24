@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import io
-import os
 import shutil
 import subprocess
 import tarfile
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from rqdata_tick_data.cli import main
@@ -16,6 +17,12 @@ from rqdata_tick_data.release_assets import package_tick_assets
 def _write(path: Path, text: str = "data") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _write_raw_part(path: Path, last: float) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"last": [last]}), path)
     return path
 
 
@@ -102,17 +109,16 @@ def test_package_tick_assets_can_dedupe_symbol_date_raw_parts(tmp_path: Path) ->
     old_raw = tmp_path / "old_raw"
     new_raw = tmp_path / "new_raw"
     duplicate = Path("parts/trade_date=20250102/order_book_id=00001.XHKG.parquet")
-    old_duplicate = _write(old_raw / duplicate, "old")
-    new_duplicate = _write(new_raw / duplicate, "new")
-    unique = _write(
+    old_duplicate = _write_raw_part(old_raw / duplicate, 1.0)
+    new_duplicate = new_raw / duplicate
+    new_duplicate.parent.mkdir(parents=True, exist_ok=True)
+    new_duplicate.write_bytes(old_duplicate.read_bytes())
+    _write_raw_part(
         old_raw / "parts/trade_date=20250102/order_book_id=00002.XHKG.parquet",
-        "u",
+        2.0,
     )
     _write(old_raw / "manifest.yml", "old\n")
     _write(new_raw / "manifest.yml", "new\n")
-    os.utime(old_duplicate, (1, 1))
-    os.utime(new_duplicate, (2, 2))
-    os.utime(unique, (1, 1))
 
     tar_dir = tmp_path / "tarballs"
     payload = package_tick_assets(
@@ -126,6 +132,7 @@ def test_package_tick_assets_can_dedupe_symbol_date_raw_parts(tmp_path: Path) ->
     )
 
     assert payload["dedupe"]["raw"]["dropped_entries"] == 1
+    assert payload["dedupe"]["raw"]["resolutions"]["byte_identical"] == 1
     raw_tar = tar_dir / "dedupe-20250105-raw-part001.tar"
     with tarfile.open(raw_tar, "r:") as tar:
         names = set(tar.getnames())
@@ -137,6 +144,51 @@ def test_package_tick_assets_can_dedupe_symbol_date_raw_parts(tmp_path: Path) ->
         "raw/old_raw/parts/trade_date=20250102/order_book_id=00002.XHKG.parquet"
         in names
     )
+
+
+def test_package_tick_assets_rejects_conflicting_nonempty_raw_parts(tmp_path: Path) -> None:
+    first_raw = tmp_path / "first_raw"
+    second_raw = tmp_path / "second_raw"
+    duplicate = Path("parts/trade_date=20250102/order_book_id=00001.XHKG.parquet")
+    _write_raw_part(first_raw / duplicate, 1.0)
+    _write_raw_part(second_raw / duplicate, 2.0)
+
+    with pytest.raises(ValueError, match="conflicting non-empty duplicate"):
+        package_tick_assets(
+            repo_root=tmp_path,
+            name="conflict",
+            as_of="20250105",
+            tar_dir=tmp_path / "tarballs",
+            raw_sources=[str(first_raw), str(second_raw)],
+            parts=["raw"],
+            raw_dedupe="symbol-date",
+        )
+
+
+def test_current_cache_preset_packages_only_current_record_metadata(tmp_path: Path) -> None:
+    records = tmp_path / "docs" / "records"
+    _write(records / "README.md", "# records\n")
+    _write(records / "2026-05-25-hk-depth-current-coverage.md", "# current\n")
+    _write(records / "2026-05-24-hk-tick-download-progress.md", "# history\n")
+
+    tar_dir = tmp_path / "tarballs"
+    package_tick_assets(
+        repo_root=tmp_path,
+        preset="current-cache",
+        name="records",
+        as_of="20250105",
+        tar_dir=tar_dir,
+        parts=["metadata"],
+    )
+
+    with tarfile.open(tar_dir / "records-20250105-metadata.tar", "r:") as tar:
+        names = set(tar.getnames())
+    assert "metadata/README.md/README.md" in names
+    assert (
+        "metadata/2026-05-25-hk-depth-current-coverage.md/"
+        "2026-05-25-hk-depth-current-coverage.md"
+    ) in names
+    assert not any("2026-05-24-hk-tick-download-progress.md" in name for name in names)
 
 
 def test_package_assets_cli_and_release_assets_dry_run(tmp_path: Path) -> None:
@@ -173,7 +225,7 @@ def test_package_assets_cli_and_release_assets_dry_run(tmp_path: Path) -> None:
                 "--tar-dir",
                 str(tar_dir),
                 "--tag",
-                "tick-depth-test",
+                "hk-depth-snapshots-test",
                 "--dry-run",
             ]
         )
@@ -228,7 +280,7 @@ def test_package_assets_cli_tar_zst_and_release_assets_dry_run(tmp_path: Path, c
                 "--tar-dir",
                 str(tar_dir),
                 "--tag",
-                "tick-depth-test",
+                "hk-depth-snapshots-test",
                 "--dry-run",
             ]
         )

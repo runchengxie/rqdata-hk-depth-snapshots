@@ -55,7 +55,7 @@ def _reference_policy_metadata(policy: str) -> dict[str, Any]:
             "description": (
                 "Use cross daily clean assets for research coverage checks. Numeric tick-vs-daily "
                 "mismatches are recorded as info because clean/adjusted prices may not share the "
-                "raw tick quote basis."
+                "raw depth snapshot quote basis."
             ),
             "numeric_mismatch_severity": "info",
         }
@@ -217,11 +217,6 @@ def normalize_tick_for_reconciliation(df: pd.DataFrame) -> pd.DataFrame:
         work["trading_date"] = work["trading_date"].map(_format_date)
     work["symbol_key"] = work["order_book_id"].map(canonical_daily_symbol)
     return work
-
-
-def _final_cumulative(group: pd.DataFrame, column: str) -> tuple[float | None, bool]:
-    source = _final_cumulative_source(group, column)
-    return source["value"], bool(source["used_fallback"])
 
 
 def _timestamp_iso(value: object) -> str | None:
@@ -842,7 +837,7 @@ def inspect_tick_daily_reconciliation(
             checks,
             check="unmatched_daily_reference_symbols",
             severity="warning",
-            message="Tick symbols could not be matched in the daily reference asset.",
+            message="Depth snapshot symbols could not be matched in the daily benchmark data.",
             affected=len(unmatched_symbols),
             samples=pd.DataFrame({"symbol_key": unmatched_symbols}),
             sample_limit=cfg.sample_limit,

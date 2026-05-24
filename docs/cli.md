@@ -3,17 +3,19 @@
 入口命令：
 
 ```bash
-rqdata-tick <command> [options]
+rqdata-hk-depth <command> [options]
 ```
+
+`rqdata-tick` 保留为兼容入口，参数和行为与主命令相同。
 
 查看帮助：
 
 ```bash
-rqdata-tick download --help
-rqdata-tick health --help
-rqdata-tick reconcile-daily --help
-rqdata-tick compact-raw --help
-rqdata-tick package-assets --help
+rqdata-hk-depth download --help
+rqdata-hk-depth health --help
+rqdata-hk-depth reconcile-daily --help
+rqdata-hk-depth compact-raw --help
+rqdata-hk-depth package-assets --help
 ```
 
 ## 命令总览
@@ -21,16 +23,16 @@ rqdata-tick package-assets --help
 | 命令 | 用途 |
 | --- | --- |
 | `probe` | 单标的单日 provider 探查 |
-| `download` | 批量下载 raw tick parquet |
-| `health` | 检查 raw tick 自身质量 |
-| `aggregate-daily` | 从 raw tick 聚合日频特征 |
-| `recompress-raw` | 重编码 raw parquet 压缩格式 |
+| `download` | 批量下载原始快照 parquet |
+| `health` | 检查原始快照自身质量 |
+| `aggregate-daily` | 从原始快照聚合日频特征 |
+| `recompress-raw` | 重编码原始快照 parquet 压缩格式 |
 | `compact-raw` | 生成冷归档 compact parquet 派生物 |
-| `emit-asset` | 输出 asset 目录 |
+| `emit-asset` | 输出交付目录 |
 | `package-assets` | 生成本地备份 tarball |
 | `release-assets` | 上传备份 tarball 到 GitHub Release |
 | `quota` | 查看 RQData quota |
-| `reconcile-daily` | 对账 tick 聚合结果与外部日频 reference asset |
+| `reconcile-daily` | 对账原始快照聚合结果与外部日频基准数据 |
 
 ## `probe`
 
@@ -49,7 +51,7 @@ rqdata-tick package-assets --help
 示例：
 
 ```bash
-rqdata-tick probe \
+rqdata-hk-depth probe \
   --symbol 00001.XHKG \
   --date 20250303 \
   --out artifacts/cache/rqdata/hk_tick_depth/probe_00001_20250303
@@ -57,7 +59,7 @@ rqdata-tick probe \
 
 ## `download`
 
-批量下载 raw tick parquet。新下载默认使用 `symbol-date` raw layout，并以 `zstd`
+批量下载原始快照 parquet。新下载默认使用 `symbol-date` 原始快照布局，并以 `zstd`
 level 3 写 parquet。
 
 | 参数 | 默认值 | 说明 |
@@ -69,7 +71,7 @@ level 3 写 parquet。
 | `--fields` | 默认字段集 | 空格分隔字段列表 |
 | `--adjust-type` | `none` | 传给 provider 的复权参数 |
 | `--time-slice` | 空 | 传给 provider 的时间切片参数 |
-| `--out` | 必填 | raw cache 输出目录 |
+| `--out` | 必填 | 原始快照缓存输出目录 |
 | `--batch-size` | `5` | 每次 provider 请求的标的数量 |
 | `--raw-layout` | `symbol-date` | `symbol-date` 或历史兼容 `batch` |
 | `--calendar` | `provider` | `provider` 使用 RQData 港股交易日历；`calendar` 使用本地日历推断 |
@@ -93,7 +95,7 @@ level 3 写 parquet。
 离线示例：
 
 ```bash
-rqdata-tick download \
+rqdata-hk-depth download \
   --symbols 00001.XHKG \
   --start-date 20250303 \
   --end-date 20250303 \
@@ -106,11 +108,11 @@ live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guar
 
 ## `health`
 
-按 parquet 分片扫描 raw cache，输出数据集级 summary 和 symbol-date 级诊断。
+按 parquet 分片扫描原始快照缓存，输出数据集级 summary 和 symbol-date 级诊断。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--input` | 必填 | raw cache 目录 |
+| `--input` | 必填 | 原始快照缓存目录 |
 | `--out-json` | 空 | 写出 JSON 报告 |
 | `--out-units` | 空 | 写出 symbol-date 级 CSV 诊断 |
 | `--fail-on-severity` | `error` | `none`、`info`、`warning`、`error`；达到阈值时返回非零退出码 |
@@ -118,7 +120,7 @@ live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guar
 示例：
 
 ```bash
-rqdata-tick health \
+rqdata-hk-depth health \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --out-json artifacts/reports/tick_health_demo.json \
   --out-units artifacts/reports/tick_health_demo_units.csv \
@@ -127,18 +129,18 @@ rqdata-tick health \
 
 ## `aggregate-daily`
 
-从 raw tick 聚合日频研究特征和质量标记。
+从原始快照聚合日频研究特征和质量标记。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--input` | 必填 | raw cache 目录 |
+| `--input` | 必填 | 原始快照缓存目录 |
 | `--output` | 必填 | 日频 parquet 输出路径 |
 | `--meta-output` | 空 | 聚合 metadata JSON 输出路径 |
 
 示例：
 
 ```bash
-rqdata-tick aggregate-daily \
+rqdata-hk-depth aggregate-daily \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --output artifacts/cache/rqdata/hk_tick_depth_daily/demo/data.parquet \
   --meta-output artifacts/cache/rqdata/hk_tick_depth_daily/demo/meta.json
@@ -146,13 +148,13 @@ rqdata-tick aggregate-daily \
 
 ## `recompress-raw`
 
-将 raw parquet cache 无损重编码到新目录，默认写 `zstd` level 3。该命令不修改输入目录，
+将原始快照 parquet 缓存无损重编码到新目录，默认写 `zstd` level 3。该命令不修改输入目录，
 输出目录会保留原始 `parts/...` 相对路径，并写出 migration metadata 和 part 级 audit CSV。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--input` | 必填 | 源 raw cache 目录 |
-| `--output` | 必填 | 新 raw cache 输出目录 |
+| `--input` | 必填 | 源原始快照缓存目录 |
+| `--output` | 必填 | 新原始快照缓存输出目录 |
 | `--compression` | `zstd` | 目标 parquet 压缩算法 |
 | `--compression-level` | `3` | 目标 parquet 压缩等级 |
 | `--min-rewrite-bytes` | `0` | 小于该字节数的分片直接复制；`0` 表示全部重写 |
@@ -166,7 +168,7 @@ rqdata-tick aggregate-daily \
 示例：
 
 ```bash
-rqdata-tick recompress-raw \
+rqdata-hk-depth recompress-raw \
   --input artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506 \
   --output artifacts/cache/rqdata/hk_tick_depth/round1_20_20250401_20260506_zstd3 \
   --compression zstd \
@@ -176,7 +178,7 @@ rqdata-tick recompress-raw \
 
 ## `compact-raw`
 
-将 `symbol-date` raw cache 合并成冷归档 parquet 派生物。输入 cache 保持原样；
+将 `symbol-date` 原始快照缓存合并成冷归档 parquet 派生物。输入缓存保持原样；
 compact 输出按标的和时间段组织，metadata 记录输入/输出字节数和压缩比例。
 `--row-group-days 1` 主要衡量小文件元数据开销；使用较大的值可评估跨日 row group
 的压缩收益，峰值内存随该值增加。输出 compact part 内的空分片 `null` schema 会
@@ -184,7 +186,7 @@ compact 输出按标的和时间段组织，metadata 记录输入/输出字节�
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--input` | 必填 | `symbol-date` raw cache 目录 |
+| `--input` | 必填 | `symbol-date` 原始快照缓存目录 |
 | `--output` | 必填 | compact 输出目录 |
 | `--grouping` | `symbol-quarter` | 输出分组：`symbol-quarter` 或 `symbol-year` |
 | `--compression` | `zstd` | compact parquet 压缩算法 |
@@ -201,7 +203,7 @@ compact 输出按标的和时间段组织，metadata 记录输入/输出字节�
 示例：
 
 ```bash
-rqdata-tick compact-raw \
+rqdata-hk-depth compact-raw \
   --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12/core400_rank341_380_20250401_20260515 \
   --output artifacts/cache/rqdata/hk_tick_depth_compact_bench/core400_q_zstd12_rg60 \
   --grouping symbol-quarter \
@@ -214,7 +216,7 @@ rqdata-tick compact-raw \
 当输入是包含 retry/refetch 副本的完整 cold cache 时，可使用保守重复处理：
 
 ```bash
-rqdata-tick compact-raw \
+rqdata-hk-depth compact-raw \
   --input artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
   --output artifacts/cache/rqdata/hk_tick_depth_compact_zstd12_q_rg60 \
   --grouping symbol-quarter \
@@ -230,18 +232,18 @@ rqdata-tick compact-raw \
 
 ## `emit-asset`
 
-输出 asset-compatible 目录。
+输出可发布或交付的数据目录。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--kind` | 必填 | `raw` 或 `daily` |
-| `--source` | 必填 | raw cache 目录或 daily parquet |
-| `--output` | 必填 | asset 输出目录 |
+| `--source` | 必填 | 原始快照缓存目录或日频 parquet |
+| `--output` | 必填 | 交付目录 |
 
 示例：
 
 ```bash
-rqdata-tick emit-asset \
+rqdata-hk-depth emit-asset \
   --kind raw \
   --source artifacts/cache/rqdata/hk_tick_depth/demo \
   --output artifacts/assets/rqdata/hk/tick_depth/demo
@@ -249,35 +251,35 @@ rqdata-tick emit-asset \
 
 ## `package-assets`
 
-将本地 tick-depth 数据、聚合结果、报告、配置和记录打成可搬运的 archive 分包。
+将本地十档盘口快照数据、聚合结果、报告、配置和记录打成可搬运的归档分包。
 默认输出 `.tar`，避免对已压缩 parquet 再执行耗时的外层压缩。`tar.gz` 和
 `tar.zst` 为显式 archive 容器压缩选项；调整 raw parquet 压缩率使用
 `recompress-raw`。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--preset` | `explicit` | `explicit` 使用显式路径；`current-cache` 选择当前默认 cache、reports、universe configs 和 dated records |
-| `--name` | `tick-depth` | 分发名称，用于 manifest 和 tarball 文件名 |
+| `--preset` | `explicit` | `explicit` 使用显式路径；`current-cache` 选择当前默认缓存、reports、universe configs、记录索引和当前覆盖摘要 |
+| `--name` | `hk-depth-snapshots` | 分发名称，用于 manifest 和 tarball 文件名 |
 | `--as-of` | 当日 UTC 日期 | 资产日期标签，格式建议 `YYYYMMDD` |
 | `--tar-dir` | `artifacts/releases/<name>_<as_of>_tarballs` | tarball 输出目录 |
 | `--overwrite` | `false` | 覆盖已有非空输出目录 |
 | `--dry-run` | `false` | 只生成选择计划，不写 tarball |
 | `--part` | 全部 part | 选择 `raw`、`daily`、`metadata`、`reports`、`configs`；可重复 |
-| `--raw-source` | 空 | 额外 raw cache 或 raw asset 路径；可重复 |
-| `--daily-source` | 空 | 额外 daily aggregate 或 daily asset 路径；可重复 |
+| `--raw-source` | 空 | 额外原始快照缓存或原始快照交付目录路径；可重复 |
+| `--daily-source` | 空 | 额外日频聚合或日频交付目录路径；可重复 |
 | `--metadata-source` | 空 | 额外 metadata 或记录路径；可重复 |
 | `--report-source` | 空 | 额外 report 路径；可重复 |
 | `--config-source` | 空 | 额外 config 或 universe 路径；可重复 |
 | `--max-tar-bytes` | `1900000000` | 单个 tarball 目标上限；超过上限时会按文件切分；GitHub Release 单 asset 需小于 2GiB，网络不稳时可用 `1000000000` |
 | `--archive-format` | `tar` | 输出格式：`tar.gz`、`tar.zst` 或 `tar`；压缩格式仅作用于 archive 容器 |
 | `--archive-compression-level` | 空 | 外层 archive 压缩等级；`tar.gz` 支持 `1-9`，`tar.zst` 支持 `1-22` |
-| `--raw-dedupe` | `none` | raw part 去重模式；`symbol-date` 对 `trade_date + order_book_id` 只保留一个 parquet part |
+| `--raw-dedupe` | `none` | 原始快照分片去重模式；`symbol-date` 只折叠安全可判定的重复日期-标的分片，冲突非空副本会使命令失败 |
 | `--progress` | `false` | 在 stderr 显示 archive 写入进度条 |
 
 示例：
 
 ```bash
-rqdata-tick package-assets \
+rqdata-hk-depth package-assets \
   --preset current-cache \
   --name hk_tick_depth_current \
   --as-of 20260509 \
@@ -290,13 +292,14 @@ rqdata-tick package-assets \
 未压缩 archive 分包：
 
 ```bash
-rqdata-tick package-assets \
+rqdata-hk-depth package-assets \
   --name hk_tick_depth_cold \
   --as-of 20260509 \
   --tar-dir artifacts/releases/hk_tick_depth_cold_20260509_tarballs \
   --raw-source artifacts/cache/rqdata/hk_tick_depth_cold_zstd12 \
   --daily-source artifacts/cache/rqdata/hk_tick_depth_daily \
-  --metadata-source docs/records \
+  --metadata-source docs/records/README.md \
+  --metadata-source docs/records/2026-05-25-hk-depth-current-coverage.md \
   --report-source artifacts/reports \
   --config-source path/to/universe_config \
   --archive-format tar \
@@ -305,19 +308,23 @@ rqdata-tick package-assets \
   --overwrite
 ```
 
+`--raw-dedupe symbol-date` 使用与 `compact-raw` 相同的安全判定：字节一致副本可
+折叠，空副本可由一致非空副本替代，不同内容的非空副本会中止打包。
+需要附带全部历史执行流水时，显式增加 `--metadata-source docs/records`。
+
 交付流程要求压缩 archive 容器时，可显式选择 `--archive-format tar.zst` 和
-`--archive-compression-level`。包含 raw parquet 时，命令会提示该等级仅压缩
-外层 archive；raw parquet 压缩率由其生成或 `recompress-raw` 阶段决定。
+`--archive-compression-level`。包含原始快照 parquet 时，命令会提示该等级仅压缩
+外层 archive；parquet 压缩率由其生成或 `recompress-raw` 阶段决定。
 
 显式选择已 emit 的 raw/daily asset：
 
 ```bash
-rqdata-tick package-assets \
+rqdata-hk-depth package-assets \
   --name hk_tick_depth_core \
   --as-of 20260509 \
   --raw-source artifacts/assets/rqdata/hk/tick_depth/core \
   --daily-source artifacts/assets/rqdata/hk/tick_depth_daily/core \
-  --metadata-source docs/records \
+  --metadata-source docs/records/2026-05-25-hk-depth-current-coverage.md \
   --config-source path/to/universe_config
 ```
 
@@ -342,9 +349,9 @@ GitHub CLI `gh`，并且只处理已有 tarball 目录。
 示例：
 
 ```bash
-rqdata-tick release-assets \
+rqdata-hk-depth release-assets \
   --tar-dir artifacts/releases/hk_tick_depth_current_20260509_tarballs \
-  --tag hk-tick-depth-current-20260509 \
+  --tag hk-depth-snapshots-current-20260509 \
   --repo owner/private-repo \
   --draft
 ```
@@ -361,18 +368,18 @@ rqdata-tick release-assets \
 示例：
 
 ```bash
-rqdata-tick quota --pretty
-rqdata-tick quota --fake-provider --pretty
+rqdata-hk-depth quota --pretty
+rqdata-hk-depth quota --fake-provider --pretty
 ```
 
 ## `reconcile-daily`
 
-将 raw tick 聚合出的 OHLCV 与外部日频 reference asset 对账。
+将原始快照聚合出的 OHLCV 与外部日频基准数据对账。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tick-input` | 必填 | raw cache 目录 |
-| `--daily-asset-dir` | 必填 | 外部日频 reference asset 目录 |
+| `--tick-input` | 必填 | 原始快照缓存目录 |
+| `--daily-asset-dir` | 必填 | 外部日频基准数据目录 |
 | `--out` | 必填 | JSON 对账报告输出路径 |
 | `--reference-policy` | `raw-daily` | `raw-daily` 或 `cross-clean` |
 | `--fail-on-severity` | `error` | `none`、`info`、`warning`、`error`；达到阈值时返回非零退出码 |
@@ -389,7 +396,7 @@ rqdata-tick quota --fake-provider --pretty
 示例：
 
 ```bash
-rqdata-tick reconcile-daily \
+rqdata-hk-depth reconcile-daily \
   --tick-input artifacts/cache/rqdata/hk_tick_depth/demo \
   --daily-asset-dir artifacts/assets/rqdata/hk/daily_raw/demo \
   --out artifacts/reports/tick_daily_reconcile_demo.json \

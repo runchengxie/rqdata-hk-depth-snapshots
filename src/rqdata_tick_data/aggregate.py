@@ -1,4 +1,4 @@
-"""Daily aggregation for raw HK tick-depth snapshots."""
+"""Daily aggregation for raw Hong Kong depth snapshots."""
 
 from __future__ import annotations
 
@@ -92,10 +92,6 @@ def imbalance(group: pd.DataFrame, levels: int) -> pd.Series:
     return ((bid - ask) / denom).where(denom > 0)
 
 
-def _incremental(values: pd.Series) -> pd.Series:
-    return _incremental_with_stats(values)["delta"]
-
-
 def _incremental_with_stats(values: pd.Series) -> dict[str, Any]:
     numeric = pd.to_numeric(values, errors="coerce")
     delta = numeric.diff()
@@ -109,10 +105,6 @@ def _incremental_with_stats(values: pd.Series) -> dict[str, Any]:
             (numeric.notna() & numeric.shift().isna() & numeric.shift(2).notna()).sum()
         ),
     }
-
-
-def _vwap(group: pd.DataFrame) -> float | None:
-    return _vwap_with_stats(group)["value"]
 
 
 def _vwap_with_stats(group: pd.DataFrame) -> dict[str, Any]:

@@ -30,6 +30,10 @@ lint：
 uv run ruff check .
 ```
 
+当前 Ruff 门禁启用 `E`、`F`、`I`、`UP`、`B` 和 `RUF100`；其中 `RUF100` 防止无效
+`noqa` 长期累积。mypy 或 pyright 尚未配置为项目门禁，类型检查应在核心数据结构逐步
+稳定后分阶段加入。
+
 离线测试使用 `FakeProvider`，不需要 RQData 账号。
 
 ## Live Tests
@@ -77,4 +81,4 @@ CLI 参数、输出布局、metadata、audit 字段或质量检查发生变化�
 `project_tools/` 是维护工具目录，不属于 runtime 行为。当前维护债清单见
 [internal/maintenance-debt-inventory.md](internal/maintenance-debt-inventory.md)。
 
-大型 raw cache 不应通过临时脚本整目录读入内存。需要健康检查、聚合、对账和 asset 输出时，优先使用 CLI 入口。
+大型原始快照缓存不应通过临时脚本整目录读入内存。需要健康检查、聚合、对账和交付目录输出时，优先使用 CLI 入口。

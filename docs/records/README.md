@@ -6,31 +6,14 @@
 
 ## 当前摘要
 
-截至记录日期 `2026-05-24`：
+当前状态见
+[2026-05-25 current coverage](2026-05-25-hk-depth-current-coverage.md)。
+截至 `2026-05-25`，provider 历史窗口内当前账号可访问的 HK CS 标的历史覆盖已补齐；
+最新已确认可取交易日为 `2026-05-22`。ETF 权限拒绝和 provider 全空返回数据集已在
+当前状态记录中单列。
 
-- 基于 `2026-05-21` live active 港股通选择快照的 897 只标的已覆盖到最新已确认
-  可取交易日 `2026-05-22`。
-- 非港股通 active ranks 1..1849 已完整覆盖 `2025-04-01..2026-05-22`；本轮补齐
-  rank1301..1400 并新增 tail rank1401..1849。
-- 全窗口 `CS` 并集复核为 `2,810` 只，本轮补入 historical delisted 63 只和
-  `2026-05-22` 临时新增 IPO 1 只；应有上市日期单元 `753,751` 个，本地缺失 `0`。
-- 新增非空 root 的 health / daily aggregate 已完成；historical zero36 的 provider
-  返回全空，health 以 `empty_dataset` 失败记录覆盖事实，不输出 daily asset。
-- 今日 quota 已确认刷新；最后成功查询值为 `164.28 MB / 1.00 GB`（`16.04%`）。
-  ETF tick 被 provider 权限拒绝，继续到 `99.5%` 只能重复现有 CS 覆盖。
-- Core400 rank341..380 的 cold compact benchmark 已完成；季度大 row group zstd12
-  样本从 `972,948,263` bytes 降到 `600,244,191` bytes，减少 `38.3%`。
-- 全量 cold zstd12 cache 的 `792,672` 个候选 parquet 中有 `5,102` 个重复副本；
-  重复核验未发现内容不同的非空版本，可按保守规则派生 compact 输出。
-- 全量季度 compact 已生成：去重后 `39,760,427,880` bytes 降至
-  `15,898,022,941` bytes，减少 `60.02%`；`2026-05-25` 完成的 full health
-  验收为 `pass`（`445,397,450` 行，`0` failure）。
-- compact 输出已于 `2026-05-25` 封装为 `9` 个未外层压缩的 tar 包，总计
-  `15,926,087,680` bytes，最大单包 `1,851,801,600` bytes；独立 SHA-256
-  复核 `9 / 9` 通过。
-
-详细 metadata、audit、health 和 daily aggregate 路径见
-[2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md)。
+后续维护按新增可取交易日执行增量下载、health、日频聚合和必要对账。逐日下载记录
+保留审计用途，常规运行从当前状态记录和稳定工作流开始。
 
 ## 索引
 
@@ -52,8 +35,9 @@
 | [2026-05-23 download progress](2026-05-23-hk-tick-download-progress.md) | 港股通 897 最新日增量、non-connect top100 补齐和 top300 扩展覆盖摘要 |
 | [2026-05-24 download progress](2026-05-24-hk-tick-download-progress.md) | 全窗口 HK CS 新覆盖补齐、ETF entitlement 阻断与 quota 截停摘要 |
 | [2026-05-24 compact benchmark](2026-05-24-hk-tick-compact-benchmark.md) | Core400 zstd12 冷归档合并压缩和 health 对照结果 |
+| [2026-05-25 current coverage](2026-05-25-hk-depth-current-coverage.md) | 当前覆盖边界、冷归档验收和后续增量维护入口 |
 
-旧逐日流水已压缩成上面的 dated records。需要逐 run 审计时，以对应 raw cache 下的
+旧逐日流水保留为上面的 dated records。需要逐 run 审计时，以对应原始快照缓存下的
 `meta/download_*.json`、`audit/download_*.csv` 和 `artifacts/reports/*.json` 为准。
 
 不要在记录中写入 secrets、token、私有账号凭据或完整本地 credential 路径。

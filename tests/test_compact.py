@@ -15,7 +15,7 @@ from rqdata_tick_data.storage import load_parquet_parts, symbol_date_part_path
 from rqdata_tick_data.testing import FakeProvider
 
 
-def _write_raw_across_quarters(root) -> None:  # noqa: ANN001
+def _write_raw_across_quarters(root) -> None:
     download_tick_depth(
         provider=FakeProvider(),
         symbols=["00001.XHKG", "00700.XHKG"],

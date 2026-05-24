@@ -1,12 +1,12 @@
 # 数据契约
 
 本页描述项目读写的稳定文件契约。数据研究语义见
-[Tick-depth 数据说明](tick-depth-data.md)，术语见 [术语表](terminology.md)，命令参数见
+[十档盘口快照数据说明](depth-snapshot-data.md)，术语见 [术语表](terminology.md)，命令参数见
 [CLI 参考](cli.md)。
 
-## Raw Cache
+## 原始快照缓存
 
-默认 raw layout 是 `symbol-date`：
+默认原始快照布局是 `symbol-date`：
 
 ```text
 parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
@@ -20,12 +20,12 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 - `trade_date` 与路径一致。
 - 请求字段覆盖本地文件字段。
 
-新 raw parquet 默认使用 `zstd` level 3 无损压缩。metadata 和 coverage 输出会记录实际
+新原始快照 parquet 默认使用 `zstd` level 3 无损压缩。metadata 和 coverage 输出会记录实际
 parquet codec 与 level，旧 `snappy` 分片仍可与新分片一起读取。
 
 ## Legacy Batch
 
-历史 batch layout：
+历史 batch 布局：
 
 ```text
 parts/trade_date=YYYYMMDD/batch_0000.parquet
@@ -43,7 +43,7 @@ meta/download_<timestamp>.json
 
 metadata 记录：
 
-- 请求参数：symbols、dates、fields、batch size、raw layout、calendar、parquet 配置。
+- 请求参数：symbols、dates、fields、batch size、原始快照布局 `raw_layout`、calendar、parquet 配置。
 - provider 类型和 retry 配置。
 - quota guard 配置和 quota snapshot。
 - 下载计划和交易日范围。
@@ -73,7 +73,7 @@ audit 用于定位失败单元、empty remote 单元、quota 截停位置和 res
 
 ## Raw Recompression Metadata
 
-`recompress-raw` 将 raw parquet 分片无损重编码到新目录，并保留 `parts/...` 相对路径。
+`recompress-raw` 将原始快照 parquet 分片无损重编码到新目录，并保留 `parts/...` 相对路径。
 每次执行写出：
 
 ```text
@@ -87,8 +87,8 @@ metadata 记录源目录、输出目录、目标 parquet 配置、输入/输出�
 
 ## Cold Compact Output
 
-`compact-raw` 从 `symbol-date` raw cache 写出冷归档派生物。该输出用于压缩实验和
-冷备份，下载 resume 与常规 raw 操作继续基于默认 raw cache。布局按参数选择：
+`compact-raw` 从 `symbol-date` 原始快照缓存写出冷归档派生物。该输出用于压缩实验和
+冷备份，下载 resume 与常规操作继续基于默认原始快照缓存。布局按参数选择：
 
 ```text
 parts/order_book_id=00001.XHKG/year=2025/quarter=Q2.parquet
@@ -121,7 +121,7 @@ metadata 的 `duplicate_resolution` 记录候选/选定/丢弃 part 数、按规
 
 ## Daily Aggregate
 
-`aggregate-daily` 输出一份日频 parquet。常见字段类别：
+`aggregate-daily` 从原始快照输出一份日频 parquet。常见字段类别：
 
 - 标识：`trade_date`、`order_book_id`、`symbol`。
 - OHLCV：open、high、low、close、volume、total_turnover。
@@ -139,9 +139,9 @@ metadata 的 `duplicate_resolution` 记录候选/选定/丢弃 part 数、按规
 
 聚合输入按 parquet 分片增量读取，适合全周期小样本和核心池质量门禁。
 
-## Asset Output
+## 交付目录输出
 
-`emit-asset` 输出 asset-compatible 目录：
+`emit-asset` 输出可交付目录：
 
 ```text
 manifest.yml
@@ -150,7 +150,7 @@ symbols.txt
 fields.txt
 ```
 
-raw asset 保留 raw parquet 分片；daily asset 保存聚合后的 parquet。`symbols.txt` 和 `fields.txt` 用于快速检查覆盖范围，`manifest.yml` 和 `meta.json` 用于发布和复核。
+原始快照交付目录保留原始 parquet 分片；日频交付目录保存聚合后的 parquet。`symbols.txt` 和 `fields.txt` 用于快速检查覆盖范围，`manifest.yml` 和 `meta.json` 用于发布和复核。
 
 ## Backup Tarballs
 
@@ -171,22 +171,23 @@ README.md
 `manifest.yml` 记录：
 
 - 分发名称、`as_of`、生成时间和 generator 版本。
-- archive 格式、压缩等级、raw 去重模式。
+- archive 格式、压缩等级、原始快照去重模式。
 - 被选中的 source paths 和缺失 source paths。
 - 每个 tarball 的 part、chunk 序号、输入字节数、压缩后字节数、文件数和 `sha256`。
 - 每个 tarball 的前几个 archive entry，便于快速确认路径布局。
 
 `<ext>` 默认为 `tar`，也可显式选择 `tar.zst` 或 `tar.gz`。后两种格式的压缩等级
-只作用于外层 archive；raw parquet codec 和压缩等级由下载或 `recompress-raw` 阶段
-决定。启用 `raw_dedupe=symbol-date` 时，raw parquet part 会按
+只作用于外层 archive；原始快照 parquet codec 和压缩等级由下载或 `recompress-raw` 阶段
+决定。启用 `raw_dedupe=symbol-date` 时，原始快照 parquet part 会按
 `trade_date + order_book_id` 分组，manifest 的 `dedupe.raw`
-记录候选、保留和丢弃数量以及样例。重复候选按文件修改时间、文件大小和 archive path
-排序后选择保留项。
+记录候选、保留和丢弃数量、解析规则分类以及样例。字节一致副本可折叠；全空副本优先
+保留带字段类型的 schema；空副本与字节一致的非空副本并存时保留非空副本。不同内容的
+非空副本会使打包失败。
 
 tarball 内部路径以 part 为第一层，例如 `raw/<source_name>/...`、`daily/<source_name>/...`
 和 config part 下的 `<source_name>/...`。恢复时先解压到工作目录，再把研究或检查命令指向解压后的
-raw、daily、reports 或 configs 路径。
+原始快照、daily、reports 或 configs 路径。
 
 ## 低内存约束
 
-`health`、`aggregate-daily`、`reconcile-daily` 和 raw `emit-asset` 应按分片扫描 raw cache。峰值内存应接近一个 parquet 分片加紧凑诊断或日频行。
+`health`、`aggregate-daily`、`reconcile-daily` 和原始快照 `emit-asset` 应按分片扫描原始快照缓存。峰值内存应接近一个 parquet 分片加紧凑诊断或日频行。

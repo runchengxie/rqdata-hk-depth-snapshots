@@ -4,6 +4,7 @@ import argparse
 import ast
 import os
 import re
+import tomllib
 from pathlib import Path
 
 import pandas as pd
@@ -214,7 +215,7 @@ def _rqdata_client_env_vars() -> set[str]:
     return names
 
 
-def _manifest_file_nodes(node):  # noqa: ANN001
+def _manifest_file_nodes(node):
     if isinstance(node, dict):
         if "file" in node:
             yield node
@@ -301,6 +302,25 @@ def test_readme_and_agents_required_sections() -> None:
         "cache_dataset_root",
     ):
         assert item in inventory
+
+
+def test_public_identity_and_data_scope_use_depth_snapshot_naming() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    docs_index = (REPO_ROOT / "docs/README.md").read_text(encoding="utf-8")
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert readme.startswith("# RQData 港股十档盘口快照工具")
+    assert "十档盘口快照" in agents
+    assert "十档盘口快照数据说明" in docs_index
+    assert "Tick 数据工具" not in readme
+    assert project["project"]["name"] == "rqdata-hk-depth-snapshots"
+    assert "rqdata-hk-depth" in project["project"]["scripts"]
+    assert "rqdata-tick" in project["project"]["scripts"]
+    assert build_parser().prog == "rqdata-hk-depth"
+    assert "逐笔成交明细" in readme
+    assert "订单簿重建" in readme
+    assert "docs/records/2026-05-25-hk-depth-current-coverage.md" in readme
 
 
 def test_docs_avoid_known_contrastive_or_negating_phrases() -> None:

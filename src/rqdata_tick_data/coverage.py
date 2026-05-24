@@ -1,4 +1,4 @@
-"""Coverage and validation helpers for raw tick parquet parts."""
+"""Coverage and validation helpers for raw depth snapshot parquet parts."""
 
 from __future__ import annotations
 

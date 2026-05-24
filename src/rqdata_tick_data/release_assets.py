@@ -1,4 +1,4 @@
-"""Package and publish local tick-depth data assets."""
+"""Package and publish local Hong Kong depth snapshot data assets."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from typing import Any
 
 from rqdata_tick_data import __version__
 from rqdata_tick_data.progress import ProgressBar
+from rqdata_tick_data.raw_duplicates import resolve_safe_duplicate_parts
 from rqdata_tick_data.storage import parse_symbol_date_part_path, write_json, write_yaml
 
 GITHUB_RELEASE_ASSET_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
@@ -106,12 +107,16 @@ def _collect_entries(
 
 
 def _default_preset_paths(repo_root: Path) -> dict[str, list[Path]]:
+    records_root = repo_root / "docs" / "records"
     candidates = {
         "raw": [repo_root / "artifacts" / "cache" / "rqdata" / "hk_tick_depth"],
         "daily": [repo_root / "artifacts" / "cache" / "rqdata" / "hk_tick_depth_daily"],
         "reports": [repo_root / "artifacts" / "reports"],
         "configs": [repo_root / "configs" / "universe"],
-        "metadata": [repo_root / "docs" / "records"],
+        "metadata": [
+            records_root / "README.md",
+            records_root / "2026-05-25-hk-depth-current-coverage.md",
+        ],
     }
     return {
         part: [path for path in paths if path.exists() or path.is_symlink()]
@@ -226,8 +231,8 @@ def _warn_on_compressed_raw_archive(
     )
     print(
         f"warning: {archive_format} compression{level} applies only to the outer archive; "
-        "selected raw parquet files retain their existing compression and may gain little "
-        "size reduction. Use recompress-raw to change parquet compression, or use "
+        "selected depth snapshot parquet files retain their existing compression and may gain "
+        "little size reduction. Use recompress-raw to change parquet compression, or use "
         "--archive-format tar to avoid outer recompression.",
         file=sys.stderr,
     )
@@ -326,14 +331,6 @@ def _raw_symbol_date_key(entry: PackageEntry) -> tuple[str, str] | None:
     return trade_date, order_book_id
 
 
-def _raw_dedupe_rank(entry: PackageEntry) -> tuple[int, int, str]:
-    try:
-        mtime_ns = entry.source.stat().st_mtime_ns
-    except FileNotFoundError:
-        mtime_ns = 0
-    return (mtime_ns, entry.size_bytes, entry.arcname)
-
-
 def _dedupe_raw_entries(
     entries: list[PackageEntry],
     *,
@@ -356,8 +353,24 @@ def _dedupe_raw_entries(
     kept: list[PackageEntry] = []
     dropped_count = 0
     dropped_samples: list[dict[str, str]] = []
+    resolutions = {
+        "byte_identical": 0,
+        "all_empty_schema_or_metadata_diff": 0,
+        "nonempty_replaces_empty": 0,
+    }
+    duplicate_units = 0
     for key, candidates in grouped.items():
-        selected = max(candidates, key=_raw_dedupe_rank)
+        if len(candidates) == 1:
+            kept.append(candidates[0])
+            continue
+        duplicate_units += 1
+        selected_path, resolution = resolve_safe_duplicate_parts(
+            key,
+            [candidate.source for candidate in candidates],
+            operation="package-assets",
+        )
+        selected = next(candidate for candidate in candidates if candidate.source == selected_path)
+        resolutions[resolution] += 1
         kept.append(selected)
         for candidate in candidates:
             if candidate == selected:
@@ -368,6 +381,7 @@ def _dedupe_raw_entries(
                     {
                         "trade_date": key[0],
                         "order_book_id": key[1],
+                        "resolution": resolution,
                         "kept": selected.arcname,
                         "dropped": candidate.arcname,
                     }
@@ -378,8 +392,10 @@ def _dedupe_raw_entries(
         "mode": mode,
         "candidate_entries": sum(len(candidates) for candidates in grouped.values()),
         "kept_symbol_date_entries": len(kept),
+        "duplicate_symbol_date_units": duplicate_units,
         "passthrough_entries": len(passthrough),
         "dropped_entries": dropped_count,
+        "resolutions": resolutions,
         "sample_dropped_entries": dropped_samples,
     }
     return deduped, report
@@ -493,13 +509,13 @@ def _sha256(path: Path) -> str:
 
 def _format_readme(manifest: dict[str, Any]) -> str:
     lines = [
-        "# RQData Tick-Depth Asset Backup",
+        "# RQData HK Depth Snapshot Asset Backup",
         "",
         f"Name: `{manifest['distribution']['name']}`",
         f"As of: `{manifest['distribution']['as_of']}`",
         f"Generated at: `{manifest['distribution']['generated_at']}`",
         "",
-        "This directory contains local tarball backups for RQData HK tick-depth assets.",
+        "This directory contains local tarball backups for RQData HK depth snapshot assets.",
         "Unpack selected tarballs into an extract directory and point downstream tooling at the",
         "extracted `raw/`, `daily/`, `metadata/`, `reports/`, or `configs/` paths.",
         "",
@@ -548,7 +564,7 @@ def package_tick_assets(
     *,
     repo_root: str | Path = ".",
     preset: str = "explicit",
-    name: str = "tick-depth",
+    name: str = "hk-depth-snapshots",
     as_of: str | None = None,
     tar_dir: str | Path | None = None,
     raw_sources: list[str] | None = None,
@@ -654,7 +670,7 @@ def package_tick_assets(
             "generated_at": generated_at,
             "preset": preset,
             "repo_root": str(root),
-            "generator": {"package": "rqdata-tick-data", "version": __version__},
+            "generator": {"package": "rqdata-hk-depth-snapshots", "version": __version__},
             "max_tar_bytes": max_tar_bytes,
             "archive_format": archive_format,
             "archive_compression_level": archive_compression_level,
@@ -737,7 +753,7 @@ def upload_release_assets(
         if selected_notes:
             create_cmd.extend(["--notes-file", str(selected_notes)])
         else:
-            create_cmd.extend(["--notes", f"RQData tick-depth asset backup {tag}"])
+            create_cmd.extend(["--notes", f"RQData HK depth snapshot asset backup {tag}"])
         if draft:
             create_cmd.append("--draft")
         if prerelease:

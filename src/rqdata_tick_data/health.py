@@ -1,4 +1,4 @@
-"""Health checks for raw tick-depth parquet parts."""
+"""Health checks for raw Hong Kong depth snapshot parquet parts."""
 
 from __future__ import annotations
 

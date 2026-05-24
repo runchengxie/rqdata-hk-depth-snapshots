@@ -1,4 +1,4 @@
-"""Filesystem helpers for tick-depth cache and asset outputs."""
+"""Filesystem helpers for depth snapshot caches and asset outputs."""
 
 from __future__ import annotations
 
@@ -200,7 +200,7 @@ def write_yaml(path: str | Path, data: dict[str, Any]) -> Path:
 
 
 def discover_parquet_parts(path: str | Path) -> list[Path]:
-    """Find parquet files under a raw cache, asset, directory, or single file."""
+    """Find parquet files under a raw snapshot cache, deliverable, directory, or file."""
     root = Path(path)
     if root.is_file() and root.suffix == ".parquet":
         return [root]

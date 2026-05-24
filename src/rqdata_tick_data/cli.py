@@ -1,4 +1,4 @@
-"""Command line interface for RQData HK tick-depth tooling."""
+"""Command line interface for RQData HK ten-level depth snapshot tooling."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _print_json(data: dict[str, object]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rqdata-tick")
+    parser = argparse.ArgumentParser(prog="rqdata-hk-depth")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     probe = subparsers.add_parser("probe", help="Run a one-symbol one-day provider probe.")
@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--out", default="artifacts/cache/rqdata/hk_tick_depth/probe")
     probe.add_argument("--fake-provider", action="store_true")
 
-    download = subparsers.add_parser("download", help="Download HK tick-depth parquet parts.")
+    download = subparsers.add_parser("download", help="Download HK depth snapshot parquet parts.")
     download.add_argument("--symbols")
     download.add_argument("--symbols-file")
     download.add_argument("--start-date", required=True)
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--quota-safety-multiplier", type=float, default=1.2)
     download.add_argument("--audit-output")
 
-    health = subparsers.add_parser("health", help="Inspect raw parquet cache health.")
+    health = subparsers.add_parser("health", help="Inspect depth snapshot parquet cache health.")
     health.add_argument("--input", required=True)
     health.add_argument("--out-json")
     health.add_argument("--out-units")
@@ -110,14 +110,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="error",
     )
 
-    aggregate = subparsers.add_parser("aggregate-daily", help="Aggregate raw ticks to daily data.")
+    aggregate = subparsers.add_parser(
+        "aggregate-daily",
+        help="Aggregate raw depth snapshots to daily data.",
+    )
     aggregate.add_argument("--input", required=True)
     aggregate.add_argument("--output", required=True)
     aggregate.add_argument("--meta-output")
 
     recompress = subparsers.add_parser(
         "recompress-raw",
-        help="Rewrite raw parquet parts to a new cache with a different compression codec.",
+        help="Rewrite depth snapshot parquet parts with a different compression codec.",
     )
     recompress.add_argument("--input", required=True)
     recompress.add_argument("--output", required=True)
@@ -137,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     compact = subparsers.add_parser(
         "compact-raw",
-        help="Merge symbol-date raw parquet parts into cold-storage compact parquet files.",
+        help="Merge symbol-date depth snapshot parts into cold-storage parquet files.",
     )
     compact.add_argument("--input", required=True)
     compact.add_argument("--output", required=True)
@@ -161,21 +164,21 @@ def build_parser() -> argparse.ArgumentParser:
     compact.add_argument("--out-units")
     compact.add_argument("--progress", action="store_true")
 
-    asset = subparsers.add_parser("emit-asset", help="Emit an asset-compatible directory.")
+    asset = subparsers.add_parser("emit-asset", help="Emit a deliverable data directory.")
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
     asset.add_argument("--source", required=True)
     asset.add_argument("--output", required=True)
 
     package_assets = subparsers.add_parser(
         "package-assets",
-        help="Package local tick-depth assets into release tarballs.",
+        help="Package local HK depth snapshot assets into release tarballs.",
     )
     package_assets.add_argument(
         "--preset",
         choices=["explicit", "current-cache"],
         default="explicit",
     )
-    package_assets.add_argument("--name", default="tick-depth")
+    package_assets.add_argument("--name", default="hk-depth-snapshots")
     package_assets.add_argument("--as-of")
     package_assets.add_argument("--tar-dir")
     package_assets.add_argument("--overwrite", action="store_true")
@@ -198,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     release_assets = subparsers.add_parser(
         "release-assets",
-        help="Upload packaged tick-depth tarballs to a GitHub Release.",
+        help="Upload packaged HK depth snapshot tarballs to a GitHub Release.",
     )
     release_assets.add_argument("--tar-dir", required=True)
     release_assets.add_argument("--tag", required=True)
@@ -217,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     reconcile = subparsers.add_parser(
         "reconcile-daily",
-        help="Reconcile raw ticks with an external daily reference asset.",
+        help="Reconcile raw depth snapshots with external daily benchmark data.",
     )
     reconcile.add_argument("--tick-input", required=True)
     reconcile.add_argument("--daily-asset-dir", required=True)

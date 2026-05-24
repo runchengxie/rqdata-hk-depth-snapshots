@@ -1,4 +1,4 @@
-"""Asset-compatible output helpers."""
+"""Deliverable data directory output helpers."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def _manifest_base(
         "symbol_count": symbol_count,
         "date_range": {"start": date_range[0], "end": date_range[1]},
         "fields": fields,
-        "generator": {"package": "rqdata-tick-data", "version": __version__},
+        "generator": {"package": "rqdata-hk-depth-snapshots", "version": __version__},
     }
 
 

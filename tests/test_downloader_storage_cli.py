@@ -27,7 +27,7 @@ class CountingProvider(FakeProvider):
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def get_price(  # noqa: ANN001
+    def get_price(
         self,
         order_book_ids,
         start_date,
@@ -57,7 +57,7 @@ class CountingProvider(FakeProvider):
 
 
 class NoCallProvider(FakeProvider):
-    def get_price(  # noqa: ANN001
+    def get_price(
         self,
         order_book_ids,
         start_date,
@@ -70,7 +70,7 @@ class NoCallProvider(FakeProvider):
 
 
 class EmptyProvider(FakeProvider):
-    def get_price(  # noqa: ANN001
+    def get_price(
         self,
         order_book_ids,
         start_date,
@@ -94,7 +94,7 @@ class IncrementingQuotaProvider(CountingProvider):
             "bytes_remaining": 1_000 - self.bytes_used,
         }
 
-    def get_price(  # noqa: ANN001
+    def get_price(
         self,
         order_book_ids,
         start_date,
@@ -120,7 +120,7 @@ class FlakyProvider(CountingProvider):
         super().__init__()
         self.failures_remaining = 1
 
-    def get_price(  # noqa: ANN001
+    def get_price(
         self,
         order_book_ids,
         start_date,

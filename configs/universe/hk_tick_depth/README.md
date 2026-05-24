@@ -1,17 +1,17 @@
-# HK Tick-depth Universe Configs
+# 港股十档盘口快照标的配置
 
-This directory keeps the canonical symbol lists for HK tick-depth downloads.
+本目录保存港股十档盘口快照下载使用的规范标的列表。目录名 `hk_tick_depth` 作为历史
+路径标识保持兼容。
 
-| Directory | Role |
+| 目录 | 用途 |
 | --- | --- |
-| `current/` | Current Core universe lists and the selection CSV used to derive them |
-| `slices/` | Operational download slices |
-| `experimental/` | Live-selected expansion lists outside the Core stock-connect universe |
-| `probes/` | Small sizing or coverage probes |
-| `archive/` | Historical bootstrap and add-on lists kept for audit only |
+| `current/` | 当前核心标的列表及生成列表所用的选择 CSV |
+| `slices/` | 下载执行切片 |
+| `experimental/` | 核心港股通集合外的 live 扩展列表 |
+| `probes/` | 小规模用量或覆盖探查列表 |
+| `archive/` | 仅供审计的历史启动和增量列表 |
 
-Symbol list files contain only RQData `order_book_id` values, one per line. Selection rules,
-dates, and intended use live in `manifest.yml`.
+标的列表文件每行只包含一个 RQData `order_book_id`。选择规则、日期和用途记录在
+`manifest.yml`。
 
-Historical records may still reference the previous flat `configs/universe/*.txt` paths. New
-commands should use the paths in this directory.
+历史记录可能引用原有 `configs/universe/*.txt` 平铺路径。新命令使用本目录内的路径。
