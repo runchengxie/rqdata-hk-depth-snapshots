@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import time
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -24,7 +24,7 @@ SESSION_PHASES = (
 def numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(float("nan"), index=frame.index, dtype="float64")
-    return pd.to_numeric(frame[column], errors="coerce")
+    return cast(pd.Series, pd.to_numeric(frame[column], errors="coerce"))
 
 
 def normalize_fail_on_severity(value: object) -> str:

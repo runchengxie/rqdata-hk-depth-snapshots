@@ -29,6 +29,7 @@ rqdata-tick = "rqdata_tick_data.cli:main_entry"
 [dependency-groups]
 dev = [
   "pytest>=8",
+  "pyright>=1.1.390",
   "ruff>=0.8",
 ]
 
@@ -49,3 +50,29 @@ extend-exclude = ["project_tools"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "RUF100"]
+
+[tool.pyright]
+include = [
+  "src/rqdata_tick_data/assets.py",
+  "src/rqdata_tick_data/audit.py",
+  "src/rqdata_tick_data/cli.py",
+  "src/rqdata_tick_data/compact.py",
+  "src/rqdata_tick_data/download_state.py",
+  "src/rqdata_tick_data/downloader.py",
+  "src/rqdata_tick_data/exceptions.py",
+  "src/rqdata_tick_data/fields.py",
+  "src/rqdata_tick_data/progress.py",
+  "src/rqdata_tick_data/quality.py",
+  "src/rqdata_tick_data/quota.py",
+  "src/rqdata_tick_data/raw_duplicates.py",
+  "src/rqdata_tick_data/recompress.py",
+  "src/rqdata_tick_data/release_assets.py",
+  "src/rqdata_tick_data/runtime.py",
+  "src/rqdata_tick_data/storage.py",
+  "src/rqdata_tick_data/symbols.py",
+]
+exclude = ["project_tools", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+typeCheckingMode = "basic"

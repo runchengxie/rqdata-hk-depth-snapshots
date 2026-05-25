@@ -35,7 +35,7 @@ parts/trade_date=YYYYMMDD/batch_0000.parquet
 
 ## Download Metadata
 
-每次 `download` 写出：
+非 `dry-run` 的 `download` 写出可持续更新的 checkpoint：
 
 ```text
 meta/download_<timestamp>.json
@@ -49,9 +49,20 @@ metadata 记录：
 - 下载计划和交易日范围。
 - 状态统计：`written`、`skipped_existing`、`empty_remote`、`failed`、`quota_blocked`。
 - audit 文件路径。
+- 完整明细 JSONL 路径 `detail_records_path`、各集合计数 `detail_counts` 和内联样例截断标记 `detail_lists_truncated`。
+- 当前运行状态 `run_status`；live 下载按已完成批次更新 checkpoint。
 - deprecations 和错误摘要。
 
-metadata 是恢复和复核下载进度的主要记录。
+metadata JSON 保留汇总和有界明细样例，默认每类最多 `1000` 条。完整计划、完成、
+跳过、无效、失败和 quota 截停明细按行写入：
+
+```text
+meta/download_details_<run>.jsonl
+```
+
+每行包含 `collection` 和对应明细字段。该 JSONL 与 audit 用于复核完整进度，metadata
+JSON 用于快速查看 checkpoint 与汇总。`dry-run` 返回有界摘要并写完整计划 JSONL，
+无需创建 live checkpoint。
 
 ## Download Audit
 
@@ -69,9 +80,9 @@ audit 按 `trade_date + order_book_id` 记录下载单元状态。常见状态�
 - `failed`
 - `quota_blocked`
 
-非 `dry-run` 下载在每个 provider 批次结束后追加对应 audit 行，因此长任务运行中即可查看
-已完成批次和截停位置。audit 用于定位失败单元、empty remote 单元、quota 截停位置和
-resume 进度；metadata 在运行退出或正常完成时写出本次汇总。
+非 `dry-run` 下载在每个 provider 批次结束后追加对应 audit 行，并原子更新 metadata
+checkpoint，因此长任务运行中即可查看已完成批次和截停位置。audit 用于定位失败单元、
+empty remote 单元、quota 截停位置和 resume 进度。
 
 ## Raw Recompression Metadata
 

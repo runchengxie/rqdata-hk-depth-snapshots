@@ -34,6 +34,7 @@ uv sync --group dev
 ```bash
 uv run pytest
 uv run ruff check .
+uv run pyright
 ```
 
 真实 RQData provider 依赖：

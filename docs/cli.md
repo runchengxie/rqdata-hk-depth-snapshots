@@ -81,7 +81,7 @@ level 3 写 parquet。
 | `--resume` | `true` | 跳过已通过本地校验的 symbol-date 单元 |
 | `--no-resume` | `false` | 强制重新请求并覆盖本次命中的单元 |
 | `--continue-on-error` | `false` | 单元失败后继续后续单元 |
-| `--dry-run` | `false` | 只生成计划和 metadata，不请求 live provider |
+| `--dry-run` | `false` | 不请求 live provider；返回有界计划摘要并写出完整计划 JSONL |
 | `--fake-provider` | `false` | 使用离线 `FakeProvider` |
 | `--retry-max-attempts` | `1` | provider 请求最大尝试次数 |
 | `--retry-backoff-seconds` | `0.0` | 重试初始等待秒数 |
@@ -91,6 +91,7 @@ level 3 写 parquet。
 | `--quota-stop-ratio` | `0.95` | quota 使用率达到该比例时停止新请求 |
 | `--quota-safety-multiplier` | `1.2` | 估算请求量的安全倍数 |
 | `--audit-output` | 空 | 指定 audit CSV 输出路径 |
+| `--metadata-detail-limit` | `1000` | metadata JSON 内每类明细的样例上限；完整明细写到 `detail_records_path` 指向的 JSONL |
 
 离线示例：
 
@@ -105,7 +106,8 @@ rqdata-hk-depth download \
 ```
 
 live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guard 和 audit
-输出作为进度记录。非 `dry-run` 执行会在每个 provider 批次结束后追加 audit 行。
+输出作为进度记录。非 `dry-run` 执行会在每个 provider 批次结束后追加 audit 行并
+原子更新有界 metadata checkpoint。`detail_records_path` 指向完整下载明细 JSONL。
 
 ## `health`
 

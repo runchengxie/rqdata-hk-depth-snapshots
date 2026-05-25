@@ -98,6 +98,7 @@ def _add_download_parser(subparsers: argparse._SubParsersAction) -> None:
     download.add_argument("--quota-stop-ratio", type=float, default=0.95)
     download.add_argument("--quota-safety-multiplier", type=float, default=1.2)
     download.add_argument("--audit-output")
+    download.add_argument("--metadata-detail-limit", type=int, default=1000)
 
 
 def _add_quality_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -321,6 +322,7 @@ def _handle_download(args: argparse.Namespace, provider: TickDataProvider | None
         quota_stop_ratio=args.quota_stop_ratio,
         quota_safety_multiplier=args.quota_safety_multiplier,
         audit_output=args.audit_output,
+        metadata_detail_limit=args.metadata_detail_limit,
     )
     _print_json(result)
     return 0

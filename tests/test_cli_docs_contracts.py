@@ -283,6 +283,7 @@ def test_readme_and_agents_required_sections() -> None:
         "uv sync --group dev",
         "uv run pytest",
         "uv run ruff check .",
+        "uv run pyright",
         "uv sync --extra rqdata --group dev",
         "FakeProvider",
         "symbol-date",

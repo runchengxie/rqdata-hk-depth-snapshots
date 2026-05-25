@@ -33,7 +33,7 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 - 先运行 `rqdata-hk-depth quota --pretty`。
 - 使用 `--resume` 保留已完成单元。
 - 使用 `--continue-on-error` 保留失败单元记录。
-- 保留 metadata 和 audit 作为进度记录；audit 会在每个 provider 批次结束后追加写出。
+- 保留 metadata、明细 JSONL 和 audit 作为进度记录；audit 与有界 metadata checkpoint 会在每个 provider 批次结束后写出。
 - 保留原始快照；日常研究读取 `aggregate-daily` 输出，原始快照用于审计、质量门禁和重算。
 - 优先下载核心活跃池；长期 empty remote、退市或无研究用途标的不进入正式池。
 - 对 live provider 分批运行，单批 estimated quota 控制在 `300MB-700MB` 附近。
@@ -64,11 +64,12 @@ rqdata-hk-depth download \
 
 ```text
 meta/download_<timestamp>.json
+meta/download_details_<run>.jsonl
 audit/download_<timestamp>_<run>.csv
 ```
 
-非 `dry-run` 下载可在运行中查看 audit 已追加的终态行；metadata 在运行退出或正常完成
-后提供汇总信息。
+非 `dry-run` 下载可在运行中查看 audit 已追加的终态行和 metadata checkpoint。metadata
+JSON 默认每类只内联最多 `1000` 条明细，完整明细见 `detail_records_path` 指向的 JSONL。
 
 已有 `snappy` 原始快照缓存可用 `recompress-raw` 迁移到 `zstd` 新目录：
 

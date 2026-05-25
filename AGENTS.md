@@ -37,6 +37,12 @@ uv run pytest
 uv run ruff check .
 ```
 
+运行类型检查：
+
+```bash
+uv run pyright
+```
+
 需要访问真实 RQData provider 时安装 live extras：
 
 ```bash
@@ -67,7 +73,7 @@ parts/trade_date=YYYYMMDD/order_book_id=00001.XHKG.parquet
 - 全周期快照下载、health 扫描、聚合、对账和交付目录输出都按长 I/O 任务处理。
 - 新下载保持 `symbol-date` 原始快照布局；它是 resume、健康诊断、聚合和低内存扫描的操作单元。
 - live RQData 运行优先把单批 estimated quota 控制在 `300MB-700MB` 附近。
-- 运行时使用 `--resume`、`--continue-on-error`、quota guard 和 audit 输出作为进度记录；非 `dry-run` 下载会按完成批次追加写出 audit。
+- 运行时使用 `--resume`、`--continue-on-error`、quota guard 和 audit 输出作为进度记录；非 `dry-run` 下载会按完成批次追加写出 audit 和有界 metadata checkpoint。
 - 任务无 traceback 消失后，重启前先检查目标输出：
   - `meta/download_*.json`
   - `audit/download_*.csv`

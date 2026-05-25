@@ -30,9 +30,16 @@ lint：
 uv run ruff check .
 ```
 
+类型检查：
+
+```bash
+uv run pyright
+```
+
 当前 Ruff 门禁启用 `E`、`F`、`I`、`UP`、`B` 和 `RUF100`；其中 `RUF100` 防止无效
-`noqa` 长期累积。mypy 或 pyright 尚未配置为项目门禁，类型检查应在核心数据结构逐步
-稳定后分阶段加入。
+`noqa` 长期累积。Pyright 以 `basic` 模式检查下载控制面、存储、归档和发布相关
+runtime 模块。Pandas 聚合、对账、health、coverage、provider/schema、测试夹具和
+`project_tools/` 的类型收敛工作记录在维护债清单中。
 
 离线测试使用 `FakeProvider`，不需要 RQData 账号。
 

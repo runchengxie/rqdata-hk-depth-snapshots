@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 
 def quota_to_payload(value: Any) -> Any:
@@ -26,7 +26,7 @@ def quota_to_payload(value: Any) -> Any:
 
 def coerce_float(value: object) -> float | None:
     try:
-        return float(value)
+        return float(cast(Any, value))
     except (TypeError, ValueError):
         return None
 

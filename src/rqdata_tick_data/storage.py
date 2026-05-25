@@ -179,10 +179,16 @@ def _json_default(value: Any) -> Any:
 def write_json(path: str | Path, data: dict[str, Any]) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(data, indent=2, sort_keys=True, default=_json_default) + "\n",
-        encoding="utf-8",
-    )
+    temp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(
+            json.dumps(data, indent=2, sort_keys=True, default=_json_default) + "\n",
+            encoding="utf-8",
+        )
+        temp.replace(target)
+    finally:
+        if temp.exists():
+            temp.unlink()
     return target
 
 

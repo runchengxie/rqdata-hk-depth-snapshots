@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -65,8 +65,7 @@ def _audit_frame(records: Sequence[AuditRecord | dict[str, Any]]) -> pd.DataFram
     for column in AuditRecord.__dataclass_fields__:
         if column not in frame.columns:
             frame[column] = pd.NA
-    frame = frame[list(AuditRecord.__dataclass_fields__)]
-    return frame
+    return cast(pd.DataFrame, frame[list(AuditRecord.__dataclass_fields__)])
 
 
 def write_audit_records(path: str | Path, records: Sequence[AuditRecord | dict[str, Any]]) -> Path:

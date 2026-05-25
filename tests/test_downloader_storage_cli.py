@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -169,6 +170,37 @@ class AuditVisibleDuringRunProvider(CountingProvider):
     ):
         if self.calls:
             self.observed_status = str(pd.read_csv(self.audit_path).loc[0, "status"])
+        return super().get_price(
+            order_book_ids,
+            start_date,
+            end_date,
+            fields,
+            adjust_type,
+            time_slice,
+        )
+
+
+class MetadataVisibleDuringRunProvider(CountingProvider):
+    def __init__(self, output_root) -> None:
+        super().__init__()
+        self.output_root = output_root
+        self.observed_completed_batches: int | None = None
+        self.observed_run_status: str | None = None
+
+    def get_price(
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
+        if self.calls:
+            paths = sorted((self.output_root / "meta").glob("download_*.json"))
+            checkpoint = json.loads(paths[-1].read_text(encoding="utf-8"))
+            self.observed_completed_batches = checkpoint["detail_counts"]["completed_batches"]
+            self.observed_run_status = checkpoint["run_status"]
         return super().get_price(
             order_book_ids,
             start_date,
@@ -496,6 +528,55 @@ def test_download_persists_audit_before_requesting_the_next_batch(tmp_path) -> N
     assert provider.observed_status == "written"
     assert result["audit_status_counts"]["written"] == 2
     assert list(pd.read_csv(audit_path)["status"]) == ["written", "written"]
+
+
+def test_download_bounds_inline_metadata_and_streams_full_details(tmp_path) -> None:
+    result = download_tick_depth(
+        provider=FakeProvider(),
+        symbols=["00001.XHKG", "00700.XHKG", "00941.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        metadata_detail_limit=1,
+    )
+
+    detail_rows = [
+        json.loads(line)
+        for line in Path(result["detail_records_path"]).read_text(encoding="utf-8").splitlines()
+    ]
+    completed_details = [
+        row for row in detail_rows if row["collection"] == "completed_units"
+    ]
+
+    assert result["detail_inline_limit"] == 1
+    assert result["detail_counts"]["completed_units"] == 3
+    assert len(result["completed_units"]) == 1
+    assert "completed_units" in result["detail_lists_truncated"]
+    assert len(completed_details) == 3
+    assert result["run_status"] == "complete"
+
+
+def test_download_checkpoints_bounded_metadata_between_batches(tmp_path) -> None:
+    root = tmp_path / "cache"
+    provider = MetadataVisibleDuringRunProvider(root)
+
+    result = download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG", "00700.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=root,
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        metadata_detail_limit=1,
+    )
+
+    assert provider.observed_completed_batches == 1
+    assert provider.observed_run_status == "running"
+    assert result["detail_counts"]["completed_batches"] == 2
+    assert len(result["completed_batches"]) == 1
 
 
 def test_quota_guard_blocks_next_chunk_without_provider_call(tmp_path) -> None:
