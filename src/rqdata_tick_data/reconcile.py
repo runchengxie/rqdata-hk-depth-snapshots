@@ -543,7 +543,7 @@ def _inspect_raw_reconciliation_inputs(
     session_start: time,
     session_end: time,
 ) -> dict[str, Any]:
-    phase_counts = {phase: 0 for phase in session_phase_counts(pd.Series(dtype="datetime64[ns]"))}
+    phase_counts = dict.fromkeys(session_phase_counts(pd.Series(dtype="datetime64[ns]")), 0)
     parse_failure_samples: list[dict[str, Any]] = []
     session_outlier_samples: list[dict[str, Any]] = []
     quote_invalid_samples: list[dict[str, Any]] = []

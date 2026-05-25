@@ -46,9 +46,7 @@ class DownloadMetadataRecorder:
         self._stream: TextIO = self.path.open("w", encoding="utf-8")
         self.metadata["detail_records_path"] = str(self.path)
         self.metadata["detail_inline_limit"] = inline_limit
-        self.metadata["detail_counts"] = {
-            collection: 0 for collection in DOWNLOAD_DETAIL_COLLECTIONS
-        }
+        self.metadata["detail_counts"] = dict.fromkeys(DOWNLOAD_DETAIL_COLLECTIONS, 0)
         self.metadata["detail_lists_truncated"] = []
 
     def record(self, collection: str, value: Mapping[str, Any]) -> None:

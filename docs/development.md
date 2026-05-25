@@ -16,6 +16,11 @@ uv sync --extra rqdata --group dev
 
 live extras 只在需要访问 provider 时安装。
 
+## 检查运行时机
+
+当前仓库没有 CI workflow 或 commit hook。本地修改和提交不会自动执行离线检查；
+合并、发布或交付前应显式运行本页列出的测试、lint 和类型检查命令。
+
 ## 测试
 
 离线测试：
@@ -36,10 +41,15 @@ uv run ruff check .
 uv run pyright
 ```
 
-当前 Ruff 门禁启用 `E`、`F`、`I`、`UP`、`B` 和 `RUF100`；其中 `RUF100` 防止无效
-`noqa` 长期累积。Pyright 以 `basic` 模式检查下载控制面、存储、归档和发布相关
-runtime 模块。Pandas 聚合、对账、health、coverage、provider/schema、测试夹具和
-`project_tools/` 的类型收敛工作记录在维护债清单中。
+当前 Ruff 门禁启用 `E`、`F`、`I`、`UP`、`B`、`C4`、`RET`、`PT` 和 `RUF100`。
+其中 `C4`、`RET` 和 `PT` 提供低噪音的集合构造、返回路径与 pytest 规则检查；
+`RUF100` 防止无效 `noqa` 长期累积。`SIM` 与 `ARG` 仍需结合现有 provider stub、
+测试 doubles 和数据处理代码逐步处理后接入。
+
+Pyright 以 `basic` 模式检查下载控制面、存储、归档和发布相关 runtime 模块。
+直接将 include 扩至整个 `src/rqdata_tick_data` 会暴露 pandas 聚合、对账、
+provider/schema 和测试夹具边界的待收敛类型问题。这些模块的分阶段纳入计划记录在
+[维护债清单](internal/maintenance-debt-inventory.md) 中。
 
 离线测试使用 `FakeProvider`，不需要 RQData 账号。
 

@@ -516,7 +516,7 @@ def inspect_raw_health(
     rows_missing_b1_column = 0
     rows_missing_quote_columns = 0
     sampled_units: list[dict[str, Any]] = []
-    unit_totals = {metric: 0 for metric in UNIT_AGGREGATE_METRICS}
+    unit_totals = dict.fromkeys(UNIT_AGGREGATE_METRICS, 0)
 
     for part in parts:
         frame = pd.read_parquet(part)
