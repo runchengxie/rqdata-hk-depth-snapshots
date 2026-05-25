@@ -14,9 +14,9 @@ import pandas as pd
 
 from rqdata_tick_data.audit import (
     AuditRecord,
+    IncrementalAuditWriter,
     default_audit_path,
     summarize_audit,
-    write_audit_records,
 )
 from rqdata_tick_data.coverage import (
     STATUS_MISSING,
@@ -597,14 +597,11 @@ def _finalize_download_run(
     *,
     provider: TickDataProvider,
     metadata: dict[str, Any],
-    audit_records: Sequence[AuditRecord],
-    audit_file: Path,
+    audit_writer: IncrementalAuditWriter,
     metadata_file: Path,
 ) -> None:
     metadata["quota_after"] = _quota_snapshot(provider)
-    metadata["audit_status_counts"] = summarize_audit(audit_records)
-    if audit_records:
-        write_audit_records(audit_file, audit_records)
+    metadata["audit_status_counts"] = audit_writer.summary()
     write_json(metadata_file, metadata)
     metadata["metadata_path"] = str(metadata_file)
 
@@ -661,7 +658,7 @@ def _download_symbol_date_tick_depth(
         time_slice=time_slice,
     )
     run_id = str(metadata["run_id"])
-    audit_records: list[AuditRecord] = []
+    preflight_audit_records: list[AuditRecord] = []
     audit_file = Path(audit_output) if audit_output else default_audit_path(root, metadata_kind)
     metadata["audit_path"] = str(audit_file)
     metadata["quota_guard"] = {
@@ -689,7 +686,7 @@ def _download_symbol_date_tick_depth(
                         row_count=valid.get("row_count", 0),
                     )
                 )
-                audit_records.append(
+                preflight_audit_records.append(
                     _audit_record(
                         run_id=run_id,
                         chunk_id=f"{unit.trade_date}:resume",
@@ -735,7 +732,7 @@ def _download_symbol_date_tick_depth(
     metadata["dry_run"] = dry_run
 
     if dry_run:
-        metadata["audit_status_counts"] = summarize_audit(audit_records)
+        metadata["audit_status_counts"] = summarize_audit(preflight_audit_records)
         return metadata
     if provider is None:
         raise DownloadError("A provider is required unless dry_run=True.")
@@ -744,6 +741,8 @@ def _download_symbol_date_tick_depth(
     metadata_file = metadata_path(root, metadata_kind)
     writer = storage["parquet"]
     successful_quota_deltas: list[int] = []
+    audit_writer = IncrementalAuditWriter(audit_file)
+    audit_writer.append(preflight_audit_records)
 
     try:
         for batch in provider_batches:
@@ -764,6 +763,7 @@ def _download_symbol_date_tick_depth(
                 batch_info["category"] = "quota_guard"
                 batch_info["error"] = "quota guard blocked provider request"
                 metadata["quota_blocked_batches"].append(batch_info)
+                batch_audit_records: list[AuditRecord] = []
                 for unit in batch.units:
                     info = _unit_info(
                         unit,
@@ -771,7 +771,7 @@ def _download_symbol_date_tick_depth(
                         estimated_next_delta_bytes=guard.get("estimated_next_delta_bytes"),
                     )
                     metadata["quota_blocked_units"].append(info)
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -782,6 +782,7 @@ def _download_symbol_date_tick_depth(
                             error_message="quota guard blocked provider request",
                         )
                     )
+                audit_writer.append(batch_audit_records)
                 continue
 
             started_at = utc_now_iso()
@@ -808,6 +809,7 @@ def _download_symbol_date_tick_depth(
                 batch_columns = list(normalized.columns)
                 finished_at = utc_now_iso()
                 duration_seconds = round(perf_counter() - started_clock, 6)
+                batch_audit_records = []
                 for unit in batch.units:
                     unit_frame = _filter_unit_frame(normalized, unit)
                     atomic_write_parquet(unit_frame, unit.part_path, **writer)
@@ -828,7 +830,7 @@ def _download_symbol_date_tick_depth(
                             quota_delta_bytes=quota_delta,
                         )
                     )
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -851,6 +853,7 @@ def _download_symbol_date_tick_depth(
                 batch_info["quota_delta_bytes"] = quota_delta
                 metadata["rows"] += batch_rows
                 metadata["completed_batches"].append(batch_info)
+                audit_writer.append(batch_audit_records)
             except Exception as exc:
                 category = getattr(exc, "category", "download_error")
                 quota_after = _quota_snapshot(provider)
@@ -863,6 +866,7 @@ def _download_symbol_date_tick_depth(
                     "quota_delta_bytes": quota_delta,
                 }
                 metadata["failed_batches"].append(failed_batch)
+                batch_audit_records = []
                 for unit in batch.units:
                     if category == "quota":
                         metadata["quota_blocked_units"].append(
@@ -872,7 +876,7 @@ def _download_symbol_date_tick_depth(
                         metadata["failed_units"].append(
                             _unit_info(unit, category=category, error=str(exc))
                         )
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -888,14 +892,14 @@ def _download_symbol_date_tick_depth(
                             error_message=str(exc),
                         )
                     )
+                audit_writer.append(batch_audit_records)
                 if category == "quota" or not continue_on_error:
                     raise
     finally:
         _finalize_download_run(
             provider=provider,
             metadata=metadata,
-            audit_records=audit_records,
-            audit_file=audit_file,
+            audit_writer=audit_writer,
             metadata_file=metadata_file,
         )
 
@@ -978,7 +982,7 @@ def _download_batch_tick_depth(
         time_slice=time_slice,
     )
     run_id = str(metadata["run_id"])
-    audit_records: list[AuditRecord] = []
+    preflight_audit_records: list[AuditRecord] = []
     audit_file = Path(audit_output) if audit_output else default_audit_path(root, metadata_kind)
     metadata["audit_path"] = str(audit_file)
     metadata["quota_guard"] = {
@@ -1048,7 +1052,7 @@ def _download_batch_tick_depth(
                             "row_count": row.get("row_count", 0),
                         }
                     )
-                    audit_records.append(
+                    preflight_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=f"{plan.trade_date}:{plan.batch_number:04d}:resume",
@@ -1091,7 +1095,7 @@ def _download_batch_tick_depth(
             }
             for plan in plans_to_download
         ]
-        metadata["audit_status_counts"] = summarize_audit(audit_records)
+        metadata["audit_status_counts"] = summarize_audit(preflight_audit_records)
         return metadata
     if provider is None:
         raise DownloadError("A provider is required unless dry_run=True.")
@@ -1100,6 +1104,8 @@ def _download_batch_tick_depth(
     metadata_file = metadata_path(root, metadata_kind)
     writer = storage["parquet"]
     successful_quota_deltas: list[int] = []
+    audit_writer = IncrementalAuditWriter(audit_file)
+    audit_writer.append(preflight_audit_records)
 
     try:
         for plan in plans_to_download:
@@ -1125,6 +1131,7 @@ def _download_batch_tick_depth(
                 batch_info["category"] = "quota_guard"
                 batch_info["error"] = "quota guard blocked provider request"
                 metadata["quota_blocked_batches"].append(batch_info)
+                batch_audit_records: list[AuditRecord] = []
                 for symbol in plan.symbols:
                     unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
                     metadata["quota_blocked_units"].append(
@@ -1134,7 +1141,7 @@ def _download_batch_tick_depth(
                             estimated_next_delta_bytes=guard.get("estimated_next_delta_bytes"),
                         )
                     )
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -1145,6 +1152,7 @@ def _download_batch_tick_depth(
                             error_message="quota guard blocked provider request",
                         )
                     )
+                audit_writer.append(batch_audit_records)
                 continue
 
             started_at = utc_now_iso()
@@ -1177,6 +1185,7 @@ def _download_batch_tick_depth(
                 batch_info["quota_delta_bytes"] = quota_delta
                 metadata["rows"] += int(len(normalized))
                 metadata["completed_batches"].append(batch_info)
+                batch_audit_records = []
                 for symbol in plan.symbols:
                     unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
                     unit_frame = _filter_unit_frame(
@@ -1206,7 +1215,7 @@ def _download_batch_tick_depth(
                             "quota_delta_bytes": quota_delta,
                         }
                     )
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -1222,6 +1231,7 @@ def _download_batch_tick_depth(
                             attempts=result.attempts,
                         )
                     )
+                audit_writer.append(batch_audit_records)
             except Exception as exc:
                 category = getattr(exc, "category", "download_error")
                 quota_after = _quota_snapshot(provider)
@@ -1234,6 +1244,7 @@ def _download_batch_tick_depth(
                     "quota_delta_bytes": quota_delta,
                 }
                 metadata["failed_batches"].append(failed_info)
+                batch_audit_records = []
                 for symbol in plan.symbols:
                     unit = UnitPlan(plan.trade_date, symbol, plan.part_path)
                     if category == "quota":
@@ -1244,7 +1255,7 @@ def _download_batch_tick_depth(
                         metadata["failed_units"].append(
                             _unit_info(unit, category=category, error=str(exc))
                         )
-                    audit_records.append(
+                    batch_audit_records.append(
                         _audit_record(
                             run_id=run_id,
                             chunk_id=chunk_id,
@@ -1260,14 +1271,14 @@ def _download_batch_tick_depth(
                             error_message=str(exc),
                         )
                     )
+                audit_writer.append(batch_audit_records)
                 if category == "quota" or not continue_on_error:
                     raise
     finally:
         _finalize_download_run(
             provider=provider,
             metadata=metadata,
-            audit_records=audit_records,
-            audit_file=audit_file,
+            audit_writer=audit_writer,
             metadata_file=metadata_file,
         )
 

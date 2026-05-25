@@ -104,7 +104,8 @@ rqdata-hk-depth download \
   --fake-provider
 ```
 
-live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guard 和 audit 输出作为进度记录。
+live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guard 和 audit
+输出作为进度记录。非 `dry-run` 执行会在每个 provider 批次结束后追加 audit 行。
 
 ## `health`
 

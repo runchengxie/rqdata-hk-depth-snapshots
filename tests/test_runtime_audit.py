@@ -4,6 +4,7 @@ import pytest
 
 from rqdata_tick_data.audit import (
     AuditRecord,
+    IncrementalAuditWriter,
     read_audit_records,
     summarize_audit,
     write_audit_records,
@@ -81,3 +82,33 @@ def test_audit_writer_and_summary(tmp_path) -> None:
     assert list(frame["status"]) == ["written", "quota_blocked"]
     assert summarize_audit(records)["written"] == 1
     assert summarize_audit(records)["quota_blocked"] == 1
+
+
+def test_incremental_audit_writer_exposes_completed_batches_immediately(tmp_path) -> None:
+    path = tmp_path / "audit.csv"
+    writer = IncrementalAuditWriter(path)
+    written = AuditRecord(
+        run_id="run",
+        chunk_id="20250303:0000",
+        trade_date="20250303",
+        order_book_id="00001.XHKG",
+        status="written",
+        part_path="part.parquet",
+        rows=4,
+    )
+    failed = AuditRecord(
+        run_id="run",
+        chunk_id="20250303:0001",
+        trade_date="20250303",
+        order_book_id="00700.XHKG",
+        status="failed",
+        part_path="part2.parquet",
+    )
+
+    writer.append([written])
+    assert list(read_audit_records(path)["status"]) == ["written"]
+
+    writer.append([failed])
+    assert list(read_audit_records(path)["status"]) == ["written", "failed"]
+    assert writer.summary()["written"] == 1
+    assert writer.summary()["failed"] == 1

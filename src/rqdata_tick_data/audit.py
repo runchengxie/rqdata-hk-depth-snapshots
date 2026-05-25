@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -55,10 +56,7 @@ def default_audit_path(dataset_root: str | Path, kind: str = "download") -> Path
     return Path(dataset_root) / "audit" / f"{kind}_{now_stamp()}_{uuid.uuid4().hex[:8]}.csv"
 
 
-def write_audit_records(path: str | Path, records: list[AuditRecord | dict[str, Any]]) -> Path:
-    """Write audit rows through a temporary file and atomic rename."""
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
+def _audit_frame(records: Sequence[AuditRecord | dict[str, Any]]) -> pd.DataFrame:
     rows = [
         record.to_dict() if isinstance(record, AuditRecord) else dict(record)
         for record in records
@@ -68,6 +66,14 @@ def write_audit_records(path: str | Path, records: list[AuditRecord | dict[str, 
         if column not in frame.columns:
             frame[column] = pd.NA
     frame = frame[list(AuditRecord.__dataclass_fields__)]
+    return frame
+
+
+def write_audit_records(path: str | Path, records: Sequence[AuditRecord | dict[str, Any]]) -> Path:
+    """Write audit rows through a temporary file and atomic rename."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame = _audit_frame(records)
     temp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     try:
         frame.to_csv(temp, index=False)
@@ -78,7 +84,7 @@ def write_audit_records(path: str | Path, records: list[AuditRecord | dict[str, 
     return target
 
 
-def summarize_audit(records: list[AuditRecord | dict[str, Any]]) -> dict[str, int]:
+def summarize_audit(records: Sequence[AuditRecord | dict[str, Any]]) -> dict[str, int]:
     """Count terminal audit statuses."""
     counts: Counter[str] = Counter()
     for record in records:
@@ -86,6 +92,32 @@ def summarize_audit(records: list[AuditRecord | dict[str, Any]]) -> dict[str, in
         if status in TERMINAL_AUDIT_STATUSES:
             counts[status] += 1
     return {status: int(counts.get(status, 0)) for status in TERMINAL_AUDIT_STATUSES}
+
+
+class IncrementalAuditWriter:
+    """Append completed audit batches without retaining all rows in memory."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._has_rows = False
+        self._counts: Counter[str] = Counter()
+
+    def append(self, records: Sequence[AuditRecord | dict[str, Any]]) -> None:
+        if not records:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _audit_frame(records).to_csv(
+            self.path,
+            mode="a" if self._has_rows else "w",
+            header=not self._has_rows,
+            index=False,
+        )
+        self._has_rows = True
+        for status, count in summarize_audit(records).items():
+            self._counts[status] += count
+
+    def summary(self) -> dict[str, int]:
+        return {status: int(self._counts.get(status, 0)) for status in TERMINAL_AUDIT_STATUSES}
 
 
 def read_audit_records(path: str | Path) -> pd.DataFrame:

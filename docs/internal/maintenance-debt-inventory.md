@@ -7,7 +7,7 @@
 
 | 范围 | 当前问题 | 后续处理 | 验证 |
 | --- | --- | --- | --- |
-| `src/rqdata_tick_data/downloader.py` | 模块较大；全量计划、audit 和 metadata 在长任务中累积内存。 | 先流式写 audit 和周期 checkpoint，再抽取 planning、quota 和 legacy batch 执行模块。 | `tests/test_downloader_storage_cli.py`；全量恢复演练。 |
+| `src/rqdata_tick_data/downloader.py` | audit 已按完成批次追加写出；全量计划和详细 metadata 在长任务中仍累积内存。 | 增加 metadata checkpoint，再抽取 planning、quota 和 legacy batch 执行模块。 | `tests/test_downloader_storage_cli.py`；全量恢复演练。 |
 | `_download_symbol_date_tick_depth` | 同时负责 resume、quota、retry、写入、audit 和 metadata。 | 引入运行状态对象与批次提交函数。 | 下载器和 audit metadata 测试。 |
 | `_download_batch_tick_depth` | 历史布局写入路径与主路径重复。 | 保留读取兼容；数据迁移确认后停止新 batch 写入。 | legacy layout 兼容与 deprecation 测试。 |
 | `src/rqdata_tick_data/reconcile.py` | 对账函数混合原始检查、日频加载、合并检查和 verdict。 | 拆分输入准备、比较和报告生成。 | 对账与质量门禁测试。 |

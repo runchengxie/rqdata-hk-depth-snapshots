@@ -152,6 +152,33 @@ class FlakyProvider(CountingProvider):
         )
 
 
+class AuditVisibleDuringRunProvider(CountingProvider):
+    def __init__(self, audit_path) -> None:
+        super().__init__()
+        self.audit_path = audit_path
+        self.observed_status: str | None = None
+
+    def get_price(
+        self,
+        order_book_ids,
+        start_date,
+        end_date,
+        fields,
+        adjust_type="none",
+        time_slice=None,
+    ):
+        if self.calls:
+            self.observed_status = str(pd.read_csv(self.audit_path).loc[0, "status"])
+        return super().get_price(
+            order_book_ids,
+            start_date,
+            end_date,
+            fields,
+            adjust_type,
+            time_slice,
+        )
+
+
 def test_batch_path_and_metadata_path(tmp_path) -> None:
     root = tmp_path / "cache"
     assert batch_part_path(root, "20250303", 2) == (
@@ -449,6 +476,26 @@ def test_download_writes_audit_for_written_and_resume_skipped_units(tmp_path) ->
     assert pd.read_csv(first["audit_path"]).loc[0, "status"] == "written"
     assert second["audit_status_counts"]["skipped_existing"] == 1
     assert pd.read_csv(second["audit_path"]).loc[0, "status"] == "skipped_existing"
+
+
+def test_download_persists_audit_before_requesting_the_next_batch(tmp_path) -> None:
+    audit_path = tmp_path / "download_audit.csv"
+    provider = AuditVisibleDuringRunProvider(audit_path)
+
+    result = download_tick_depth(
+        provider=provider,
+        symbols=["00001.XHKG", "00700.XHKG"],
+        start_date="20250303",
+        end_date="20250303",
+        output_root=tmp_path / "cache",
+        fields=parse_fields("last volume total_turnover a1 a1_v b1 b1_v"),
+        batch_size=1,
+        audit_output=audit_path,
+    )
+
+    assert provider.observed_status == "written"
+    assert result["audit_status_counts"]["written"] == 2
+    assert list(pd.read_csv(audit_path)["status"]) == ["written", "written"]
 
 
 def test_quota_guard_blocks_next_chunk_without_provider_call(tmp_path) -> None:

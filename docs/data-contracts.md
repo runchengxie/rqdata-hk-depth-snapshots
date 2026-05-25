@@ -69,7 +69,9 @@ audit 按 `trade_date + order_book_id` 记录下载单元状态。常见状态�
 - `failed`
 - `quota_blocked`
 
-audit 用于定位失败单元、empty remote 单元、quota 截停位置和 resume 进度。
+非 `dry-run` 下载在每个 provider 批次结束后追加对应 audit 行，因此长任务运行中即可查看
+已完成批次和截停位置。audit 用于定位失败单元、empty remote 单元、quota 截停位置和
+resume 进度；metadata 在运行退出或正常完成时写出本次汇总。
 
 ## Raw Recompression Metadata
 
