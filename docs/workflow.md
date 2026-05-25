@@ -115,13 +115,15 @@ rqdata-hk-depth compact-raw \
 
 ## 4. Health
 
-`health` 检查原始快照自身质量。常用输出包括 JSON summary 和 symbol-date 级 CSV。
+`health` 检查原始快照自身质量。JSON summary 保留异常样例和汇总统计；完整
+symbol-date 明细通过 CSV 随扫描写出。全量扫描使用 CSV，避免 JSON 携带完整诊断列表。
 
 ```bash
 rqdata-hk-depth health \
   --input artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260506 \
   --out-json artifacts/reports/tick_health_core.json \
   --out-units artifacts/reports/tick_health_core_units.csv \
+  --unit-sample-limit 20 \
   --fail-on-severity warning
 ```
 

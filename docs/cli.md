@@ -114,7 +114,8 @@ live provider 下载建议使用 `--resume`、`--continue-on-error`、quota guar
 | --- | --- | --- |
 | `--input` | 必填 | 原始快照缓存目录 |
 | `--out-json` | 空 | 写出 JSON 报告 |
-| `--out-units` | 空 | 写出 symbol-date 级 CSV 诊断 |
+| `--out-units` | 空 | 写出完整 symbol-date 级诊断；全量扫描建议使用 `.csv` 以便流式写出 |
+| `--unit-sample-limit` | `20` | JSON 报告中保留的异常 symbol-date 样例数量；完整诊断使用 `--out-units` |
 | `--fail-on-severity` | `error` | `none`、`info`、`warning`、`error`；达到阈值时返回非零退出码 |
 
 示例：
@@ -124,6 +125,7 @@ rqdata-hk-depth health \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --out-json artifacts/reports/tick_health_demo.json \
   --out-units artifacts/reports/tick_health_demo_units.csv \
+  --unit-sample-limit 20 \
   --fail-on-severity warning
 ```
 

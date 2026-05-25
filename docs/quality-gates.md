@@ -21,7 +21,10 @@
 
 ## 原始快照 Health
 
-`health` 会按 parquet 分片增量扫描，输出数据集级 summary 和 symbol-date 级 `unit_diagnostics`。
+`health` 会按 parquet 分片增量扫描。JSON summary 的 `unit_diagnostics` 默认只保留最多
+`20` 个异常 symbol-date 样例，并通过 `unit_count`、`anomalous_unit_count` 和
+`unit_diagnostics_truncated` 说明采样范围。需要完整 symbol-date 诊断时传入
+`--out-units <path>.csv`，CSV 会随分片扫描流式写出。
 
 当前检查包括：
 
@@ -43,6 +46,7 @@ rqdata-hk-depth health \
   --input artifacts/cache/rqdata/hk_tick_depth/demo \
   --out-json artifacts/reports/tick_health_demo.json \
   --out-units artifacts/reports/tick_health_demo_units.csv \
+  --unit-sample-limit 20 \
   --fail-on-severity warning
 ```
 
@@ -100,4 +104,7 @@ rqdata-hk-depth health \
 
 ## 低内存扫描
 
-`health`、`aggregate-daily` 和 `reconcile-daily` 对原始快照输入使用分片级增量读取。内存中主要保留单个 parquet 分片、symbol-date 诊断、日频聚合行和最终对账表。
+`health`、`aggregate-daily` 和 `reconcile-daily` 对原始快照输入使用分片级增量读取。
+`health` 的 JSON 仅保留有界异常样例，完整 CSV 诊断按分片写出；全量运行不应把全部
+symbol-date 诊断放入 JSON。内存中主要保留单个 parquet 分片、有限诊断样例、日频聚合
+行和最终对账表。

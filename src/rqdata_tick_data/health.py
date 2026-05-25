@@ -24,6 +24,23 @@ from rqdata_tick_data.storage import (
 
 REQUIRED_RAW_COLUMNS = ("order_book_id", "datetime")
 CUMULATIVE_RESET_RATIO = 0.50
+DEFAULT_UNIT_DIAGNOSTIC_SAMPLE_LIMIT = 20
+UNIT_AGGREGATE_METRICS = (
+    "duplicate_row_count",
+    "duplicate_key_count",
+    "exact_duplicate_row_count",
+    "same_timestamp_conflict_count",
+    "timestamp_non_monotonic_count",
+    "negative_volume_count",
+    "negative_turnover_count",
+    "volume_decrease_count",
+    "turnover_decrease_count",
+    "volume_large_drop_count",
+    "turnover_large_drop_count",
+    "volume_missing_then_resumed_count",
+    "turnover_missing_then_resumed_count",
+    *(f"{phase}_rows" for phase in SESSION_PHASES),
+)
 
 
 def _clean_scalar(value: Any) -> Any:
@@ -279,8 +296,21 @@ def _unit_diagnostics(
     return diagnostics
 
 
-def _sum_units(units: list[dict[str, Any]], key: str) -> int:
-    return int(sum(int(row.get(key) or 0) for row in units))
+def _accumulate_unit_metrics(totals: dict[str, int], units: list[dict[str, Any]]) -> None:
+    for unit in units:
+        for metric in UNIT_AGGREGATE_METRICS:
+            totals[metric] += int(unit.get(metric) or 0)
+
+
+def _append_unit_diagnostics_csv(
+    path: Path,
+    units: list[dict[str, Any]],
+    *,
+    append: bool,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame(units)
+    frame.to_csv(path, mode="a" if append else "w", header=not append, index=False)
 
 
 def _build_quality_checks(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -378,6 +408,10 @@ def _empty_report(input_root: str | Path) -> dict[str, Any]:
         "volume_missing_then_resumed_count": 0,
         "turnover_missing_then_resumed_count": 0,
         **{f"{phase}_rows": 0 for phase in SESSION_PHASES},
+        "unit_count": 0,
+        "anomalous_unit_count": 0,
+        "unit_diagnostic_sample_limit": DEFAULT_UNIT_DIAGNOSTIC_SAMPLE_LIMIT,
+        "unit_diagnostics_truncated": False,
         "unit_diagnostics": [],
         "warnings": [],
         "failures": [],
@@ -441,16 +475,33 @@ def inspect_raw_health(
     input_root: str | Path,
     *,
     fail_on_severity: str = "error",
+    unit_sample_limit: int = DEFAULT_UNIT_DIAGNOSTIC_SAMPLE_LIMIT,
+    units_output: str | Path | None = None,
 ) -> dict[str, Any]:
+    if unit_sample_limit < 0:
+        raise ValueError("unit_sample_limit must be non-negative.")
     parts = discover_parquet_parts(input_root)
     report: dict[str, Any] = {
         **_empty_report(input_root),
         "part_count": len(parts),
+        "unit_diagnostic_sample_limit": unit_sample_limit,
     }
+    units_path = Path(units_output) if units_output is not None else None
+    stream_units_to_csv = units_path is not None and units_path.suffix.lower() != ".parquet"
+    buffered_output_units: list[dict[str, Any]] | None = (
+        [] if units_path and not stream_units_to_csv else None
+    )
+    wrote_csv_units = False
 
     if not parts:
         report["failures"].append("empty_dataset")
         report["status"] = "fail"
+        if units_path is not None:
+            _write_unit_diagnostics(units_path, [])
+            report["unit_diagnostics_write_mode"] = (
+                "streamed_csv" if stream_units_to_csv else "buffered_parquet"
+            )
+            report["unit_diagnostics_path"] = str(units_path)
         return _finish_health_report(report, fail_on_severity)
 
     seen_columns: set[str] = set()
@@ -464,7 +515,8 @@ def inspect_raw_health(
     rows_missing_a1_column = 0
     rows_missing_b1_column = 0
     rows_missing_quote_columns = 0
-    units: list[dict[str, Any]] = []
+    sampled_units: list[dict[str, Any]] = []
+    unit_totals = {metric: 0 for metric in UNIT_AGGREGATE_METRICS}
 
     for part in parts:
         frame = pd.read_parquet(part)
@@ -499,7 +551,23 @@ def inspect_raw_health(
             timestamp_end = part_end if timestamp_end is None else max(timestamp_end, part_end)
 
         part_units = _unit_diagnostics(work, sample_clean_units=False)
-        units.extend(part_units)
+        report["unit_count"] += len(part_units)
+        _accumulate_unit_metrics(unit_totals, part_units)
+        anomalous_units = [unit for unit in part_units if unit["check_names"]]
+        report["anomalous_unit_count"] += len(anomalous_units)
+        remaining_sample_slots = max(unit_sample_limit - len(sampled_units), 0)
+        sampled_units.extend(anomalous_units[:remaining_sample_slots])
+        if units_path is not None:
+            if stream_units_to_csv:
+                _append_unit_diagnostics_csv(
+                    units_path,
+                    part_units,
+                    append=wrote_csv_units,
+                )
+                wrote_csv_units = wrote_csv_units or bool(part_units)
+            else:
+                assert buffered_output_units is not None
+                buffered_output_units.extend(part_units)
         quote_stats = _quote_stats(work)
         for metric in (
             "best_bid_missing_count",
@@ -548,14 +616,10 @@ def inspect_raw_health(
             for column, count in sorted(missing_counts.items())
         }
 
-    report["unit_diagnostics"] = units
-    for metric in (
-        "duplicate_row_count",
-        "duplicate_key_count",
-        "exact_duplicate_row_count",
-        "same_timestamp_conflict_count",
-    ):
-        report[metric] = _sum_units(units, metric)
+    report["unit_diagnostics"] = sampled_units
+    report["unit_diagnostics_truncated"] = report["anomalous_unit_count"] > len(sampled_units)
+    for metric, total in unit_totals.items():
+        report[metric] = total
     if "a1" in seen_columns:
         report["best_ask_missing_count"] += rows_missing_a1_column
     if "b1" in seen_columns:
@@ -565,21 +629,6 @@ def inspect_raw_health(
         report["quote_coverage_ratio"] = float(quote_positive_count / int(report["row_count"]))
         report["bad_quote_ratio"] = float(quote_bad_count / int(report["row_count"]))
     report["invalid_best_spread_count"] = report["best_spread_cross_count"]
-
-    for metric in (
-        "timestamp_non_monotonic_count",
-        "negative_volume_count",
-        "negative_turnover_count",
-        "volume_decrease_count",
-        "turnover_decrease_count",
-        "volume_large_drop_count",
-        "turnover_large_drop_count",
-        "volume_missing_then_resumed_count",
-        "turnover_missing_then_resumed_count",
-    ):
-        report[metric] = _sum_units(units, metric)
-    for phase in SESSION_PHASES:
-        report[f"{phase}_rows"] = _sum_units(units, f"{phase}_rows")
 
     warning_metrics = [
         "timestamp_parse_failure_count",
@@ -600,6 +649,16 @@ def inspect_raw_health(
         "outside_session_rows",
     ]
     report["warnings"] = [metric for metric in warning_metrics if int(report.get(metric) or 0)]
+    if units_path is not None:
+        if stream_units_to_csv:
+            if not wrote_csv_units:
+                _write_unit_diagnostics(units_path, [])
+            report["unit_diagnostics_write_mode"] = "streamed_csv"
+        else:
+            assert buffered_output_units is not None
+            _write_unit_diagnostics(units_path, buffered_output_units)
+            report["unit_diagnostics_write_mode"] = "buffered_parquet"
+        report["unit_diagnostics_path"] = str(units_path)
 
     return _finish_health_report(report, fail_on_severity)
 
@@ -607,7 +666,7 @@ def inspect_raw_health(
 def _write_unit_diagnostics(path: str | Path, units: list[dict[str, Any]]) -> Path:
     target = Path(path)
     frame = pd.DataFrame(units)
-    if target.suffix == ".parquet":
+    if target.suffix.lower() == ".parquet":
         return atomic_write_parquet(frame, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(target, index=False)
@@ -620,11 +679,14 @@ def write_health_report(
     *,
     fail_on_severity: str = "error",
     units_output: str | Path | None = None,
+    unit_sample_limit: int = DEFAULT_UNIT_DIAGNOSTIC_SAMPLE_LIMIT,
 ) -> dict[str, Any]:
-    report = inspect_raw_health(input_root, fail_on_severity=fail_on_severity)
-    if units_output is not None:
-        units_path = _write_unit_diagnostics(units_output, report["unit_diagnostics"])
-        report["unit_diagnostics_path"] = str(units_path)
+    report = inspect_raw_health(
+        input_root,
+        fail_on_severity=fail_on_severity,
+        unit_sample_limit=unit_sample_limit,
+        units_output=units_output,
+    )
     path = (
         Path(output_json) if output_json else metadata_path(Path(input_root) / "health", "health")
     )

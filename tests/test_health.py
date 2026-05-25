@@ -138,4 +138,52 @@ def test_health_can_write_unit_diagnostics(tmp_path) -> None:
     report = write_health_report(root, units_output=tmp_path / "health_units.csv")
 
     assert report["unit_diagnostics_path"].endswith("health_units.csv")
-    assert (tmp_path / "health_units.csv").exists()
+    assert report["unit_diagnostics_write_mode"] == "streamed_csv"
+    assert len(pd.read_csv(tmp_path / "health_units.csv")) == 1
+
+
+def test_health_bounds_json_anomaly_samples_and_streams_full_unit_csv(tmp_path) -> None:
+    root = tmp_path / "cache"
+    for index, symbol in enumerate(("00001.XHKG", "00002.XHKG", "00003.XHKG"), start=1):
+        path = root / "parts" / "trade_date=20250303" / f"part_{index}.parquet"
+        atomic_write_parquet(
+            pd.DataFrame(
+                {
+                    "order_book_id": [symbol, symbol],
+                    "datetime": [
+                        pd.Timestamp("2025-03-03 09:30"),
+                        pd.Timestamp("2025-03-03 09:30"),
+                    ],
+                    "trading_date": ["20250303", "20250303"],
+                    "a1": [100.1, 100.1],
+                    "b1": [100.0, 100.0],
+                }
+            ),
+            path,
+        )
+
+    units_path = tmp_path / "health_units.csv"
+    report = write_health_report(
+        root,
+        units_output=units_path,
+        unit_sample_limit=1,
+    )
+
+    assert report["unit_count"] == 3
+    assert report["anomalous_unit_count"] == 3
+    assert len(report["unit_diagnostics"]) == 1
+    assert report["unit_diagnostics_truncated"] is True
+    assert report["duplicate_key_count"] == 3
+    assert report["unit_diagnostics_write_mode"] == "streamed_csv"
+    assert len(pd.read_csv(units_path)) == 3
+
+
+def test_health_empty_input_reports_unit_output_mode(tmp_path) -> None:
+    units_path = tmp_path / "health_units.PARQUET"
+
+    report = write_health_report(tmp_path / "cache", units_output=units_path)
+
+    assert report["status"] == "fail"
+    assert report["unit_diagnostics_write_mode"] == "buffered_parquet"
+    assert report["unit_diagnostics_path"] == str(units_path)
+    assert units_path.exists()

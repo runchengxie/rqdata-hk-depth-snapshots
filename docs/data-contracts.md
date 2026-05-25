@@ -139,6 +139,19 @@ metadata 的 `duplicate_resolution` 记录候选/选定/丢弃 part 数、按规
 
 聚合输入按 parquet 分片增量读取，适合全周期小样本和核心池质量门禁。
 
+## Health Report
+
+`health` 的 JSON 报告包含数据集汇总、质量门禁结论和有限异常样例：
+
+- `unit_count`：扫描到的 symbol-date 单元总数。
+- `anomalous_unit_count`：存在 warning 检查项的 symbol-date 单元数。
+- `unit_diagnostic_sample_limit`：JSON 中的异常样例上限，默认 `20`。
+- `unit_diagnostics_truncated`：异常样例是否因上限被截断。
+- `unit_diagnostics`：有界异常样例，不承载完整全量明细。
+
+使用 `--out-units <path>.csv` 时，完整 symbol-date 明细在扫描过程中写到 CSV。大规模
+数据集应使用 CSV 输出；`.parquet` 明细输出保留兼容支持，当前会在完成扫描后集中写入。
+
 ## 交付目录输出
 
 `emit-asset` 输出可交付目录：
@@ -190,4 +203,4 @@ tarball 内部路径以 part 为第一层，例如 `raw/<source_name>/...`、`da
 
 ## 低内存约束
 
-`health`、`aggregate-daily`、`reconcile-daily` 和原始快照 `emit-asset` 应按分片扫描原始快照缓存。峰值内存应接近一个 parquet 分片加紧凑诊断或日频行。
+`health`、`aggregate-daily`、`reconcile-daily` 和原始快照 `emit-asset` 应按分片扫描原始快照缓存。`health` 默认 JSON 报告与 CSV 明细输出不保留全量诊断列表；峰值内存应接近一个 parquet 分片加有限诊断或日频行。

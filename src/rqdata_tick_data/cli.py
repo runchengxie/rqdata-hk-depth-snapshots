@@ -54,10 +54,7 @@ def _print_json(data: dict[str, object]) -> None:
     print(json.dumps(data, indent=2, sort_keys=True, default=str))
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rqdata-hk-depth")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
+def _add_probe_parser(subparsers: argparse._SubParsersAction) -> None:
     probe = subparsers.add_parser("probe", help="Run a one-symbol one-day provider probe.")
     probe.add_argument("--symbol", required=True)
     probe.add_argument("--date", required=True)
@@ -67,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--out", default="artifacts/cache/rqdata/hk_tick_depth/probe")
     probe.add_argument("--fake-provider", action="store_true")
 
+
+def _add_download_parser(subparsers: argparse._SubParsersAction) -> None:
     download = subparsers.add_parser("download", help="Download HK depth snapshot parquet parts.")
     download.add_argument("--symbols")
     download.add_argument("--symbols-file")
@@ -100,16 +99,21 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--quota-safety-multiplier", type=float, default=1.2)
     download.add_argument("--audit-output")
 
+
+def _add_quality_parser(subparsers: argparse._SubParsersAction) -> None:
     health = subparsers.add_parser("health", help="Inspect depth snapshot parquet cache health.")
     health.add_argument("--input", required=True)
     health.add_argument("--out-json")
     health.add_argument("--out-units")
+    health.add_argument("--unit-sample-limit", type=int, default=20)
     health.add_argument(
         "--fail-on-severity",
         choices=["none", "info", "warning", "error"],
         default="error",
     )
 
+
+def _add_aggregate_parser(subparsers: argparse._SubParsersAction) -> None:
     aggregate = subparsers.add_parser(
         "aggregate-daily",
         help="Aggregate raw depth snapshots to daily data.",
@@ -118,6 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate.add_argument("--output", required=True)
     aggregate.add_argument("--meta-output")
 
+
+def _add_storage_parsers(subparsers: argparse._SubParsersAction) -> None:
     recompress = subparsers.add_parser(
         "recompress-raw",
         help="Rewrite depth snapshot parquet parts with a different compression codec.",
@@ -164,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     compact.add_argument("--out-units")
     compact.add_argument("--progress", action="store_true")
 
+
+def _add_delivery_parsers(subparsers: argparse._SubParsersAction) -> None:
     asset = subparsers.add_parser("emit-asset", help="Emit a deliverable data directory.")
     asset.add_argument("--kind", required=True, choices=["raw", "daily"])
     asset.add_argument("--source", required=True)
@@ -214,10 +222,14 @@ def build_parser() -> argparse.ArgumentParser:
     release_assets.add_argument("--clobber", action="store_true")
     release_assets.add_argument("--dry-run", action="store_true")
 
+
+def _add_provider_parser(subparsers: argparse._SubParsersAction) -> None:
     quota = subparsers.add_parser("quota", help="Show RQData quota usage.")
     quota.add_argument("--pretty", action="store_true")
     quota.add_argument("--fake-provider", action="store_true")
 
+
+def _add_reconcile_parser(subparsers: argparse._SubParsersAction) -> None:
     reconcile = subparsers.add_parser(
         "reconcile-daily",
         help="Reconcile raw depth snapshots with external daily benchmark data.",
@@ -249,6 +261,18 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--session-end", default="16:30")
     reconcile.add_argument("--sample-limit", type=int, default=20)
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="rqdata-hk-depth")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_probe_parser(subparsers)
+    _add_download_parser(subparsers)
+    _add_quality_parser(subparsers)
+    _add_aggregate_parser(subparsers)
+    _add_storage_parsers(subparsers)
+    _add_delivery_parsers(subparsers)
+    _add_provider_parser(subparsers)
+    _add_reconcile_parser(subparsers)
     return parser
 
 
@@ -309,6 +333,7 @@ def _handle_health(args: argparse.Namespace, provider: TickDataProvider | None) 
         args.out_json,
         fail_on_severity=args.fail_on_severity,
         units_output=args.out_units,
+        unit_sample_limit=args.unit_sample_limit,
     )
     print(format_health_summary(report))
     print(f"report_path={report['report_path']}")
