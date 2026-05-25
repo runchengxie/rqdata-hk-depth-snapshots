@@ -222,7 +222,7 @@ tar 内条目包括 `14,157` 个 compact parquet 以及 compact 自带的 metada
 ```text
 tag: hk_tick_depth_cold_compact_20260525
 title: HK Tick Depth Cold Compact Assets 20260525
-url: https://github.com/runchengxie/rqdata-tick-data/releases/tag/untagged-ddca45b251a6c0cdae68
+url: https://github.com/runchengxie/rqdata-hk-depth-snapshots/releases/tag/untagged-ddca45b251a6c0cdae68
 assets at creation: 0
 ```
 

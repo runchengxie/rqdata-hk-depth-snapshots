@@ -323,6 +323,16 @@ def test_public_identity_and_data_scope_use_depth_snapshot_naming() -> None:
     assert "docs/records/2026-05-25-hk-depth-current-coverage.md" in readme
 
 
+def test_project_docs_do_not_reference_the_previous_repository_url() -> None:
+    previous_url = "github.com/runchengxie/rqdata-tick-data"
+    offenders = [
+        str(path.relative_to(REPO_ROOT))
+        for path in _project_authored_markdown_files()
+        if previous_url in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders
+
+
 def test_docs_avoid_known_contrastive_or_negating_phrases() -> None:
     banned = (
         "不是",
