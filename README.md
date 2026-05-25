@@ -60,6 +60,20 @@ probe/download -> 原始快照缓存 -> health -> aggregate-daily -> reconcile-d
 | 与日频基准对账 | `reconcile-daily` | [质量门禁](docs/quality-gates.md) |
 | 输出和归档资产 | `emit-asset`、`package-assets` | [工作流](docs/workflow.md) |
 
+## 共享 HK Data Platform
+
+如果与 `cross-sectional-trees` 共用独立 HK 数据根，约定使用：
+
+```bash
+export HK_DATA_PLATFORM_ROOT=/data/hk-data-platform
+export CSTREE_ARTIFACTS_ROOT=/data/hk-data-platform
+```
+
+本项目继续负责十档盘口快照的下载、健康检查、聚合和交付目录输出；正式 raw / daily
+asset 发布到 `$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth*` 后，再由
+`hk-data-platform` 的 current contract 登记给下游策略项目消费。具体命令见
+[工作流](docs/workflow.md) 的共享数据根发布小节。
+
 ## 原始数据布局
 
 新下载默认以一个标的、一个交易日为操作单元：

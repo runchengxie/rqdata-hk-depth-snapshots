@@ -11,6 +11,7 @@
 | 日常运行下载 | [RQData Provider](providers-rqdata.md) -> [工作流](workflow.md) -> [CLI 参考](cli.md) |
 | 验收数据质量 | [质量门禁](quality-gates.md) -> [数据契约](data-contracts.md) -> [执行记录](records/) |
 | 发布或归档资产 | [数据契约](data-contracts.md) -> [CLI 参考](cli.md) -> [工作流](workflow.md) |
+| 发布到共享 HK 数据根 | [工作流](workflow.md) -> [数据契约](data-contracts.md) |
 | 维护代码和文档 | [开发与维护](development.md) -> [维护债清单](internal/maintenance-debt-inventory.md) |
 
 ## 页面分工

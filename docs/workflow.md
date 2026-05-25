@@ -192,6 +192,45 @@ rqdata-hk-depth emit-asset \
 
 交付目录契约见 [数据契约](data-contracts.md)。
 
+### 发布到共享 HK 数据根
+
+如果本项目与 `cross-sectional-trees` 共同使用独立 HK 数据根，先设定：
+
+```bash
+export HK_DATA_PLATFORM_ROOT=/data/hk-data-platform
+export CSTREE_ARTIFACTS_ROOT=/data/hk-data-platform
+```
+
+原始快照和日频聚合交付目录发布到共享根：
+
+```bash
+rqdata-hk-depth emit-asset \
+  --kind raw \
+  --source artifacts/cache/rqdata/hk_tick_depth/core_20250401_20260409 \
+  --output "$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth/core_20250401_20260409"
+
+rqdata-hk-depth emit-asset \
+  --kind daily \
+  --source artifacts/cache/rqdata/hk_tick_depth_daily/core_20250401_20260409/data.parquet \
+  --output "$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth_daily/core_20250401_20260409"
+```
+
+然后把稳定 alias 指向本次交付目录，并重建 current contract：
+
+```bash
+ln -sfn core_20250401_20260409 \
+  "$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth/hk_tick_depth_latest"
+ln -sfn core_20250401_20260409 \
+  "$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth_daily/hk_tick_depth_daily_latest"
+
+hkdata contract build \
+  --artifacts-root "$HK_DATA_PLATFORM_ROOT" \
+  --target-date 20260409
+```
+
+`tick_depth_raw` 和 `tick_depth_daily` 进入 `metadata/current_assets/hk_current.json` 后，
+下游策略项目只读 current contract 和 manifest，不直接依赖本项目工作目录。
+
 ## 8. Package Assets
 
 `package-assets` 把本地原始快照缓存、日频聚合、报告、配置和记录打成本地 archive
