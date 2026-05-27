@@ -1,5 +1,9 @@
 # RQData 港股十档盘口快照工具
 
+> 迁移状态：核心实现已经迁入 `../market-data-platform/src/market_data_platform/hk_depth`。
+> 本仓当前保留为兼容和历史参考入口；新调用优先使用 `marketdata rqdata hk-depth -- ...`
+> 或由 `market-data-platform` 安装出的 `rqdata-hk-depth` 命令。
+
 本项目用于探查、下载、校验、对账、聚合和打包 RQData 港股历史十档盘口快照数据。
 数据来自 RQData `frequency="tick"` 的港股接口，包含十档买卖盘、快照时点行情和
 累计成交字段。
