@@ -3,8 +3,10 @@
 > 迁移状态：核心实现已经迁入 `../market-data-platform/src/market_data_platform/hk_depth`。
 > 本仓当前保留为兼容和历史参考入口；新调用优先使用 `marketdata rqdata hk-depth -- ...`
 > 或由 `market-data-platform` 安装出的 `rqdata-hk-depth` 命令。
+> 本仓 `rqdata_tick_data.*` Python 模块作为兼容层委托平台内实现，后续业务修复优先进入
+> `market_data_platform.hk_depth`。
 
-本项目用于探查、下载、校验、对账、聚合和打包 RQData 港股历史十档盘口快照数据。
+本项目保留 RQData 港股历史十档盘口快照数据的探查、下载、校验、对账、聚合和打包入口。
 数据来自 RQData `frequency="tick"` 的港股接口，包含十档买卖盘、快照时点行情和
 累计成交字段。
 
@@ -73,9 +75,9 @@ export HK_DATA_PLATFORM_ROOT=/data/hk-data-platform
 export CSTREE_ARTIFACTS_ROOT=/data/hk-data-platform
 ```
 
-本项目继续负责十档盘口快照的下载、健康检查、聚合和交付目录输出；正式 raw / daily
+平台内 `market_data_platform.hk_depth` 负责十档盘口快照的下载、健康检查、聚合和交付目录输出；正式 raw / daily
 asset 发布到 `$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth*` 后，再由
-`hk-data-platform` 的 current contract 登记给下游策略项目消费。具体命令见
+`market-data-platform` 的 current contract 登记给下游策略项目消费。具体命令见
 [工作流](docs/workflow.md) 的共享数据根发布小节。
 
 ## 原始数据布局
@@ -112,7 +114,8 @@ rqdata-hk-depth quota --pretty
 `--continue-on-error` 和 audit/metadata checkpoint 保留进度。
 
 主命令为 `rqdata-hk-depth`。历史命令 `rqdata-tick` 保留为兼容入口；Python 包名、
-既有数据目录和 schema ID 继续保持兼容。
+既有数据目录和 schema ID 继续保持兼容。新代码优先使用
+`market_data_platform.hk_depth`。
 
 ## 开发检查
 

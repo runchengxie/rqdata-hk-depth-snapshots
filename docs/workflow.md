@@ -1,6 +1,6 @@
 # 工作流
 
-本项目的稳定业务链路：
+稳定业务链路：
 
 ```text
 probe/download -> 原始快照缓存 -> health -> aggregate-daily -> reconcile-daily -> emit-asset -> package-assets
@@ -194,7 +194,7 @@ rqdata-hk-depth emit-asset \
 
 ### 发布到共享 HK 数据根
 
-如果本项目与 `cross-sectional-trees` 共同使用独立 HK 数据根，先设定：
+如果兼容入口与 `cross-sectional-trees` 共同使用独立 HK 数据根，先设定：
 
 ```bash
 export HK_DATA_PLATFORM_ROOT=/data/hk-data-platform
@@ -223,7 +223,8 @@ ln -sfn core_20250401_20260409 \
 ln -sfn core_20250401_20260409 \
   "$HK_DATA_PLATFORM_ROOT/assets/rqdata/hk/tick_depth_daily/hk_tick_depth_daily_latest"
 
-hkdata contract build \
+marketdata contract build \
+  --market hk \
   --artifacts-root "$HK_DATA_PLATFORM_ROOT" \
   --target-date 20260409
 ```
